@@ -1,26 +1,100 @@
 @import "tailwindcss";
-
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
 @theme inline {
+  /* Fonts */
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+
+  /* FluencyScope custom colors */
+  --color-ink: hsl(0 0% 4%);
+  --color-paper: hsl(50 20% 98%);
+  --color-mist: hsl(50 10% 94%);
+  --color-stone: hsl(40 2% 44%);
+  --color-accent-blue: hsl(224 69% 40%);
+  --color-success: hsl(145 33% 37%);
+  --color-warning: hsl(28 52% 51%);
+  --color-alert: hsl(0 45% 44%);
+
+  /* shadcn semantic tokens mapped to FluencyScope */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  /* Radius */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Custom font size for display text */
+  --text-display: 56px;
+  --text-display--line-height: 1.1;
+  --text-display--font-weight: 600;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  /* FluencyScope palette - base values */
+  --ink: hsl(0 0% 4%);
+  --paper: hsl(50 20% 98%);
+  --mist: hsl(50 10% 94%);
+  --stone: hsl(40 2% 44%);
+  --accent-blue: hsl(224 69% 40%);
+  --success: hsl(145 33% 37%);
+  --warning: hsl(28 52% 51%);
+  --alert: hsl(0 45% 44%);
+
+  /* shadcn semantic tokens mapped to FluencyScope */
+  --background: hsl(50 20% 98%);
+  --foreground: hsl(0 0% 4%);
+  --card: hsl(50 20% 98%);
+  --card-foreground: hsl(0 0% 4%);
+  --popover: hsl(50 20% 98%);
+  --popover-foreground: hsl(0 0% 4%);
+  --primary: hsl(224 69% 40%);
+  --primary-foreground: hsl(50 20% 98%);
+  --secondary: hsl(50 10% 94%);
+  --secondary-foreground: hsl(0 0% 4%);
+  --muted: hsl(50 10% 94%);
+  --muted-foreground: hsl(40 2% 44%);
+  --accent: hsl(50 10% 94%);
+  --accent-foreground: hsl(0 0% 4%);
+  --destructive: hsl(0 45% 44%);
+  --border: hsl(50 10% 94%);
+  --input: hsl(50 10% 94%);
+  --ring: hsl(224 69% 40%);
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }

@@ -1,0 +1,105 @@
+"use client";
+
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { motion } from "framer-motion";
+import { Suspense, use, useEffect } from "react";
+import { AnimatedCheckmark } from "@/components/AnimatedCheckmark";
+import { playChime, getSoundEnabled } from "@/lib/audio/sounds";
+
+interface DonePageProps {
+  params: Promise<{ token: string }>;
+}
+
+function DoneContent({ token }: { token: string }) {
+  const searchParams = useSearchParams();
+  const sessionId = searchParams.get("s");
+
+  // Play chime on mount (if sounds enabled and not already played)
+  useEffect(() => {
+    // The chime should have been played in the recording page
+    // but we can play it here as a fallback if needed
+    // Only play if we got here through a fresh navigation
+    const hasPlayedChime = sessionStorage.getItem("fs:chime-played");
+    if (!hasPlayedChime && getSoundEnabled()) {
+      playChime();
+      sessionStorage.setItem("fs:chime-played", "true");
+
+      // Clear the flag after a short delay
+      setTimeout(() => {
+        sessionStorage.removeItem("fs:chime-played");
+      }, 2000);
+    }
+  }, []);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className="min-h-screen bg-paper flex flex-col items-center justify-center px-6"
+    >
+      {/* Animated checkmark */}
+      <AnimatedCheckmark size={80} delay={0.1} className="mb-8" />
+
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.4 }}
+        className="text-center"
+      >
+        <h1 className="font-serif text-[40px] font-semibold text-ink mb-3">
+          Nice work!
+        </h1>
+        <p className="text-base text-stone">Your reading has been recorded.</p>
+        <p className="text-sm text-stone mt-1 italic">
+          You can close this window now.
+        </p>
+
+        {/* Report link for testing - teachers access reports via dashboard */}
+        {sessionId && (
+          <Link
+            href={`/report/${sessionId}`}
+            className="mt-10 inline-block text-sm text-accent-blue hover:underline transition-opacity"
+          >
+            View report
+          </Link>
+        )}
+      </motion.div>
+    </motion.div>
+  );
+}
+
+export default function DonePage({ params }: DonePageProps) {
+  const { token } = use(params);
+
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-paper flex flex-col items-center justify-center px-6">
+          <div className="w-20 h-20 rounded-full bg-success/10 flex items-center justify-center mb-8">
+            <svg
+              className="w-10 h-10 text-success"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth={2.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          </div>
+          <h1 className="font-serif text-[40px] font-semibold text-ink mb-3">
+            Nice work!
+          </h1>
+          <p className="text-base text-stone">Your reading has been recorded.</p>
+        </div>
+      }
+    >
+      <DoneContent token={token} />
+    </Suspense>
+  );
+}
