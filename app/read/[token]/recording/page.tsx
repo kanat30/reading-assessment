@@ -17,7 +17,7 @@ import {
   UploadProgress,
   UploadParams,
 } from "@/lib/audio/upload";
-import { playTick, playChime, playError } from "@/lib/audio/sounds";
+import { playTick, playError } from "@/lib/audio/sounds";
 import { createClient } from "@/lib/supabase/browser";
 
 type RecordingState =
@@ -80,6 +80,46 @@ function RecordingContent({ token }: { token: string }) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const checkMicPermission = async () => {
+    try {
+      // Check permission status
+      const permissionStatus = await navigator.permissions.query({
+        name: "microphone" as PermissionName,
+      });
+
+      if (permissionStatus.state === "denied") {
+        setState("mic-denied");
+        return;
+      }
+
+      if (permissionStatus.state === "granted") {
+        setState("ready");
+        return;
+      }
+
+      // prompt state - we'll show the ready state and ask when they click
+      setState("ready");
+    } catch {
+      // Permissions API not supported, proceed to ready state
+      setState("ready");
+    }
+  };
+
+  const checkOrphanedSessions = async () => {
+    if (!isIndexedDBAvailable()) return;
+
+    try {
+      const orphaned = await listOrphanedSessions();
+      if (orphaned.length > 0) {
+        console.log("Found orphaned recording sessions:", orphaned);
+        // For now, just log. Could show UI to recover
+        // In production, would attempt recovery or clear old sessions
+      }
+    } catch (e) {
+      console.error("Error checking orphaned sessions:", e);
+    }
+  };
+
   // Load assessment and student name
   useEffect(() => {
     async function loadAssessment() {
@@ -131,46 +171,6 @@ function RecordingContent({ token }: { token: string }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
-
-  const checkMicPermission = async () => {
-    try {
-      // Check permission status
-      const permissionStatus = await navigator.permissions.query({
-        name: "microphone" as PermissionName,
-      });
-
-      if (permissionStatus.state === "denied") {
-        setState("mic-denied");
-        return;
-      }
-
-      if (permissionStatus.state === "granted") {
-        setState("ready");
-        return;
-      }
-
-      // prompt state - we'll show the ready state and ask when they click
-      setState("ready");
-    } catch {
-      // Permissions API not supported, proceed to ready state
-      setState("ready");
-    }
-  };
-
-  const checkOrphanedSessions = async () => {
-    if (!isIndexedDBAvailable()) return;
-
-    try {
-      const orphaned = await listOrphanedSessions();
-      if (orphaned.length > 0) {
-        console.log("Found orphaned recording sessions:", orphaned);
-        // For now, just log. Could show UI to recover
-        // In production, would attempt recovery or clear old sessions
-      }
-    } catch (e) {
-      console.error("Error checking orphaned sessions:", e);
-    }
-  };
 
   const handleStartRecording = async () => {
     try {
@@ -331,55 +331,53 @@ function RecordingContent({ token }: { token: string }) {
     window.location.reload();
   };
 
-  // Loading state
+  // Loading state - passage skeleton
   if (state === "loading") {
     return (
-      <div className="min-h-screen bg-paper flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-mist border-t-accent-blue rounded-full animate-spin" />
+      <div className="min-h-screen bg-paper flex items-center justify-center px-6 py-24">
+        <div className="max-w-[680px] w-full">
+          <div className="skeleton-shimmer h-4 w-32 rounded mb-8" />
+          <div className="space-y-3">
+            <div className="skeleton-shimmer h-6 w-full rounded" />
+            <div className="skeleton-shimmer h-6 w-full rounded" />
+            <div className="skeleton-shimmer h-6 w-11/12 rounded" />
+            <div className="skeleton-shimmer h-6 w-full rounded" />
+            <div className="skeleton-shimmer h-6 w-10/12 rounded" />
+          </div>
+        </div>
       </div>
     );
   }
 
-  // Not found state
+  // Not found / expired state - calm serif design
   if (state === "not-found") {
     return (
       <div className="min-h-screen bg-paper flex flex-col items-center justify-center px-6">
         <p className="font-serif text-xl text-ink italic text-center">
-          This reading link is not available.
+          This link has expired.
         </p>
-        <p className="text-sm text-stone mt-2">
-          Please check with your teacher for a new link.
+        <p className="text-sm text-stone mt-2 text-center">
+          Ask your teacher for a new link.
         </p>
       </div>
     );
   }
 
-  // Mic denied state
+  // Mic denied state - calm serif design, no warning icon
   if (state === "mic-denied") {
     return (
       <div className="min-h-screen bg-paper flex flex-col items-center justify-center px-6">
-        <div className="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center mb-6">
-          <svg
-            className="w-8 h-8 text-warning"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            />
-          </svg>
+        <p className="font-serif text-xl text-ink italic text-center max-w-md mb-4">
+          We need your microphone to hear you read.
+        </p>
+        <div className="text-sm text-stone text-center max-w-md mb-6 space-y-2">
+          <p>To enable your microphone:</p>
+          <ol className="text-left list-decimal list-inside space-y-1 inline-block">
+            <li>Click the lock icon in your browser&apos;s address bar</li>
+            <li>Find &quot;Microphone&quot; and allow access</li>
+            <li>Refresh this page</li>
+          </ol>
         </div>
-        <p className="font-serif text-xl text-ink text-center max-w-md mb-4">
-          Microphone access is required
-        </p>
-        <p className="text-sm text-stone text-center max-w-md mb-6">
-          Please enable microphone access in your browser settings, then refresh
-          this page.
-        </p>
         <button
           onClick={handleRefreshPermission}
           className="text-sm text-accent-blue hover:underline"
@@ -390,27 +388,12 @@ function RecordingContent({ token }: { token: string }) {
     );
   }
 
-  // Error state
+  // Error state - calm serif design, no red icons
   if (state === "error") {
     return (
       <div className="min-h-screen bg-paper flex flex-col items-center justify-center px-6">
-        <div className="w-16 h-16 rounded-full bg-alert/10 flex items-center justify-center mb-6">
-          <svg
-            className="w-8 h-8 text-alert"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </div>
-        <p className="font-serif text-xl text-ink text-center max-w-md italic mb-6">
-          {errorMessage}
+        <p className="font-serif text-xl text-ink italic text-center max-w-md mb-4">
+          {errorMessage || "Something went wrong."}
         </p>
         <button
           onClick={handleRetry}
@@ -422,33 +405,15 @@ function RecordingContent({ token }: { token: string }) {
     );
   }
 
-  // Offline state
+  // Offline state - calm serif design, no warning icon
   if (state === "offline") {
     return (
       <div className="min-h-screen bg-paper flex flex-col items-center justify-center px-6">
-        <div className="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center mb-6">
-          <svg
-            className="w-8 h-8 text-warning"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a5 5 0 00-7.07-7.071M3 3l3.879 3.879"
-            />
-          </svg>
-        </div>
-        <p className="font-serif text-xl text-ink text-center max-w-md mb-4">
-          You&apos;re offline
+        <p className="font-serif text-xl text-ink italic text-center max-w-md mb-4">
+          You&apos;re offline.
         </p>
         <p className="text-sm text-stone text-center max-w-md">
-          We&apos;ll save your recording when you&apos;re back online.
-        </p>
-        <p className="text-xs text-stone text-center max-w-md mt-2 italic">
-          Your recording is safely stored on this device.
+          Your recording is saved on this device. We&apos;ll upload it when you&apos;re back online.
         </p>
       </div>
     );
@@ -484,7 +449,10 @@ function RecordingContent({ token }: { token: string }) {
               exit={{ opacity: 0 }}
               className="flex flex-col items-center py-6 px-6"
             >
-              <div className="w-16 h-16 rounded-full border-4 border-mist border-t-accent-blue animate-spin mb-4" />
+              {/* Pulsing indicator instead of spinner */}
+              <div className="w-16 h-16 rounded-full bg-mist flex items-center justify-center mb-4 animate-pulse">
+                <div className="w-3 h-3 rounded-full bg-stone" />
+              </div>
               <p className="text-base text-ink font-medium">
                 Checking microphone...
               </p>
@@ -566,7 +534,10 @@ function RecordingContent({ token }: { token: string }) {
               exit={{ opacity: 0 }}
               className="flex flex-col items-center py-6 px-6"
             >
-              <div className="w-16 h-16 rounded-full border-4 border-mist border-t-accent-blue animate-spin mb-4" />
+              {/* Pulsing indicator instead of spinner */}
+              <div className="w-16 h-16 rounded-full bg-accent-blue/10 flex items-center justify-center mb-4 animate-pulse">
+                <div className="w-3 h-3 rounded-full bg-accent-blue" />
+              </div>
               <p className="text-base text-ink font-medium">
                 {uploadProgress?.message || "Analyzing..."}
               </p>

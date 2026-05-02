@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { ErrorPattern } from "./types";
+import { EnhancedErrorPattern } from "./types";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -9,12 +9,12 @@ export async function generateSummary(
   wcpm: number,
   accuracy: number,
   percentile: number,
-  errorPatterns: ErrorPattern[],
+  errorPatterns: EnhancedErrorPattern[],
   passageTitle: string
 ): Promise<string> {
   try {
     const patternsDescription = errorPatterns.length > 0
-      ? errorPatterns.map(p => `${p.pattern}: ${p.count}/${p.total} missed`).join(", ")
+      ? errorPatterns.map(p => `${p.label} (${p.event_count} errors: ${p.matched_words.slice(0, 3).join(", ")}${p.matched_words.length > 3 ? "..." : ""})`).join("; ")
       : "No significant patterns";
 
     const response = await anthropic.messages.create({

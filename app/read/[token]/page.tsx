@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { preloadAudio } from "@/lib/audio/sounds";
 import { createClient } from "@/lib/supabase/browser";
 
-type FlowState = "loading" | "not-found" | "landing" | "passage";
+type FlowState = "loading" | "not-found" | "landing";
 
 interface Passage {
   id: string;
@@ -96,41 +96,37 @@ export default function TokenPage({ params }: TokenPageProps) {
 
     sessionStorage.setItem(STUDENT_NAME_KEY, trimmed);
     setNameError("");
-    setState("passage");
-  };
-
-  const handleStartReading = () => {
+    // Go directly to recording
     router.push(`/read/${token}/recording`);
   };
 
-  const handleBackToName = () => {
-    setState("landing");
-  };
-
-  // Loading state
+  // Loading state - simple skeleton
   if (state === "loading") {
     return (
-      <div className="min-h-screen bg-paper flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-mist border-t-accent-blue rounded-full animate-spin" />
+      <div className="min-h-screen bg-paper flex items-center justify-center px-6">
+        <div className="w-full max-w-md space-y-4">
+          <div className="skeleton-shimmer h-10 w-32 rounded mx-auto" />
+          <div className="skeleton-shimmer h-6 w-48 rounded mx-auto" />
+          <div className="skeleton-shimmer h-12 w-full rounded-lg mt-8" />
+          <div className="skeleton-shimmer h-12 w-full rounded-lg" />
+        </div>
       </div>
     );
   }
 
-  // Not found state
+  // Not found / expired state - calm serif design
   if (state === "not-found") {
     return (
       <div className="min-h-screen bg-paper flex flex-col items-center justify-center px-6">
         <p className="font-serif text-xl text-ink italic text-center">
-          This reading link is not available.
+          This link has expired.
         </p>
-        <p className="text-sm text-stone mt-2">
-          Please check with your teacher for a new link.
+        <p className="text-sm text-stone mt-2 text-center">
+          Ask your teacher for a new link.
         </p>
       </div>
     );
   }
-
-  const passage = assessment?.passages;
 
   return (
     <div
@@ -194,65 +190,6 @@ export default function TokenPage({ params }: TokenPageProps) {
               {/* Class label indicator */}
               {assessment?.class_label && (
                 <p className="text-xs text-stone text-center mt-6">
-                  {assessment.class_label}
-                </p>
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {state === "passage" && passage && (
-          <motion.div
-            key="passage"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.24, ease: "easeOut" }}
-            className="flex-1 flex flex-col"
-          >
-            <div className="px-6 pt-6 flex items-center justify-between">
-              <button
-                onClick={handleBackToName}
-                className="text-stone hover:text-ink transition-colors text-sm flex items-center gap-1"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 19l-7-7 7-7"
-                  />
-                </svg>
-                Back
-              </button>
-              <p className="text-sm text-stone">{studentName}</p>
-            </div>
-
-            <div className="flex-1 flex items-center justify-center px-6 py-12">
-              <div className="max-w-[680px] w-full">
-                <p className="text-sm text-stone lowercase tracking-wide mb-8">
-                  {passage.title.toLowerCase()} · {passage.grade_band}
-                </p>
-                <p className="font-serif text-2xl leading-relaxed text-ink">
-                  {passage.text}
-                </p>
-              </div>
-            </div>
-
-            <div className="pb-12 flex flex-col items-center">
-              <Button
-                onClick={handleStartReading}
-                className="bg-accent-blue text-paper text-base px-8 py-4 h-auto rounded-lg hover:bg-accent-blue/90 transition-colors duration-[120ms]"
-              >
-                Start reading
-              </Button>
-              {assessment?.class_label && (
-                <p className="text-xs text-stone mt-4">
                   {assessment.class_label}
                 </p>
               )}

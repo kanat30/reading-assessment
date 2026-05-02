@@ -2,12 +2,23 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { nanoid } from "nanoid";
 import { createClient } from "@/lib/supabase/browser";
 import { MiniWaveform } from "@/components/MiniWaveform";
-import { SessionReport } from "@/components/SessionReport";
+import { ReportSkeleton } from "@/components/skeletons/ReportSkeleton";
 import { formatContextualTime } from "@/lib/format/time";
+
+// Dynamic import for SessionReport with skeleton loading
+const SessionReport = dynamic(() => import("@/components/SessionReport").then(m => ({ default: m.SessionReport })), {
+  loading: () => <ReportSkeleton />,
+});
+
+// Dynamic import for CommandPalette (teacher-only)
+const CommandPalette = dynamic(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })), {
+  ssr: false,
+});
 
 // Types
 interface Passage {
@@ -63,6 +74,7 @@ interface Teacher {
   full_name: string;
   email: string;
   school_id: string;
+  role?: string;
 }
 
 interface School {
@@ -116,6 +128,17 @@ export function DashboardClient({
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [isSavingQuestions, setIsSavingQuestions] = useState(false);
   const [questionsModified, setQuestionsModified] = useState(false);
+
+  // Settings panel state
+  const [showSettings, setShowSettings] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [tempName, setTempName] = useState(teacher.full_name || "");
+  const [isSavingName, setIsSavingName] = useState(false);
+
+  // Delete confirmation state
+  const [deleteSession, setDeleteSession] = useState<Session | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const supabase = createClient();
 
@@ -353,7 +376,7 @@ export function DashboardClient({
     setIsCreating(true);
     const shareToken = nanoid(16);
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("assessments")
       .insert({
         school_id: school.id,
@@ -403,18 +426,102 @@ export function DashboardClient({
     ? `${typeof window !== "undefined" ? window.location.origin : ""}/read/${generatedToken}`
     : "";
 
+  // Save name handler
+  const handleSaveName = async () => {
+    if (!tempName.trim() || tempName.trim() === teacher.full_name) {
+      setEditingName(false);
+      return;
+    }
+
+    setIsSavingName(true);
+    const { error } = await supabase
+      .from("teachers")
+      .update({ full_name: tempName.trim() })
+      .eq("id", teacher.id);
+
+    // Note: After saving, the page will need a refresh to show the updated name
+    // since teacher is a prop. The database update is persisted.
+    setIsSavingName(false);
+    setEditingName(false);
+  };
+
+  // Sign out handler
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.push("/auth/login");
+  };
+
+  // Delete session handler
+  const handleDeleteSession = async () => {
+    if (!deleteSession || deleteConfirmText.toLowerCase() !== "delete") return;
+
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/sessions/${deleteSession.id}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        setSessions((prev) => prev.filter((s) => s.id !== deleteSession.id));
+        setDeleteSession(null);
+        setDeleteConfirmText("");
+      }
+    } catch (error) {
+      console.error("Error deleting session:", error);
+    }
+    setIsDeleting(false);
+  };
+
+  const openDeleteConfirm = (session: Session, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteSession(session);
+    setDeleteConfirmText("");
+  };
+
+  const closeDeleteConfirm = () => {
+    setDeleteSession(null);
+    setDeleteConfirmText("");
+  };
+
   return (
     <div className="min-h-screen bg-paper">
       {/* Main content */}
       <div className="max-w-[1100px] mx-auto px-12 py-16 max-lg:px-6">
-        {/* School name - minimal chrome */}
-        <p className="text-sm text-stone tracking-wide lowercase mb-8">
-          {school.name}
-        </p>
+        {/* Header bar */}
+        <div className="flex items-center justify-between mb-10">
+          <div>
+            <p className="text-sm text-stone tracking-wide lowercase">
+              {school.name}
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            {teacher.role === "admin" && (
+              <a
+                href="/admin"
+                className="text-xs font-medium bg-accent-blue/10 text-accent-blue px-2 py-1 rounded hover:bg-accent-blue/20 transition-colors"
+              >
+                Admin
+              </a>
+            )}
+            <p className="text-sm text-ink">
+              {teacher.full_name}
+            </p>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-2 rounded-lg text-stone hover:text-ink hover:bg-mist/50 transition-colors"
+              title="Settings"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
+        </div>
 
         {/* Empty state */}
         {sessions.length === 0 ? (
-          <div className="py-12">
+          <div className="py-8">
             {/* Welcome header */}
             <div className="mb-12">
               <h1 className="font-serif text-[32px] font-semibold text-ink mb-2">
@@ -482,10 +589,15 @@ export function DashboardClient({
           </div>
         ) : (
           <>
-            {/* Headline */}
-            <h1 className="font-serif text-[32px] font-semibold text-ink mb-4">
-              Readings
-            </h1>
+            {/* Welcome + Headline */}
+            <div className="mb-6">
+              <p className="text-stone mb-1">
+                Welcome back, {teacher.full_name?.split(" ")[0] || "Teacher"}
+              </p>
+              <h1 className="font-serif text-[32px] font-semibold text-ink">
+                Readings
+              </h1>
+            </div>
 
             {/* Class label filter */}
             <div className="flex items-center gap-1 text-sm mb-8 flex-wrap">
@@ -499,7 +611,7 @@ export function DashboardClient({
               >
                 all
               </button>
-              {classLabels.map((label, idx) => (
+              {classLabels.map((label) => (
                 <span key={label} className="flex items-center">
                   <span className="text-mist mx-2">·</span>
                   <button
@@ -582,7 +694,7 @@ export function DashboardClient({
                           <div className="flex justify-center">
                             {isProcessing ? (
                               <div className="w-20 h-6 flex items-center justify-center">
-                                <div className="w-4 h-4 border-2 border-mist border-t-stone rounded-full animate-spin" />
+                                <div className="skeleton-shimmer w-16 h-5 rounded-sm" />
                               </div>
                             ) : (
                               <MiniWaveform
@@ -592,12 +704,26 @@ export function DashboardClient({
                             )}
                           </div>
 
-                          {/* Right: time */}
-                          <div className="text-sm text-stone text-right whitespace-nowrap">
-                            {isProcessing ? (
-                              <span className="text-xs">Scoring...</span>
-                            ) : (
-                              formatContextualTime(session.scored_at || session.created_at)
+                          {/* Right: time + delete */}
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm text-stone whitespace-nowrap">
+                              {isProcessing ? (
+                                <span className="text-xs">Scoring...</span>
+                              ) : (
+                                formatContextualTime(session.scored_at || session.created_at)
+                              )}
+                            </span>
+                            {/* Delete button - visible on hover */}
+                            {hoveredRowId === session.id && !isProcessing && (
+                              <button
+                                onClick={(e) => openDeleteConfirm(session, e)}
+                                className="p-1.5 rounded text-stone/50 hover:text-alert hover:bg-alert/10 transition-colors"
+                                title="Delete reading"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
                             )}
                           </div>
                         </div>
@@ -734,8 +860,9 @@ export function DashboardClient({
                     <p className="text-sm text-stone mb-8">{selectedPassage?.title}</p>
 
                     {isLoadingQuestions ? (
-                      <div className="flex items-center justify-center py-16">
-                        <div className="w-6 h-6 border-2 border-mist border-t-accent-blue rounded-full animate-spin" />
+                      <div className="flex flex-col items-center justify-center py-16 space-y-4">
+                        <div className="skeleton-shimmer h-6 w-48 rounded" />
+                        <div className="skeleton-shimmer h-4 w-64 rounded" />
                       </div>
                     ) : questions.length === 0 ? (
                       <div className="space-y-4">
@@ -746,7 +873,7 @@ export function DashboardClient({
                         >
                           <p className="text-lg font-medium text-ink flex items-center gap-2">
                             {isGeneratingQuestions && (
-                              <span className="w-4 h-4 border-2 border-mist border-t-accent-blue rounded-full animate-spin" />
+                              <span className="skeleton-shimmer w-4 h-4 rounded-full" />
                             )}
                             Generate with AI
                           </p>
@@ -801,7 +928,7 @@ export function DashboardClient({
                           className="text-sm text-accent-blue hover:underline disabled:opacity-50 flex items-center gap-1"
                         >
                           {isGeneratingQuestions && (
-                            <span className="w-3 h-3 border-2 border-mist border-t-accent-blue rounded-full animate-spin" />
+                            <span className="skeleton-shimmer w-3 h-3 rounded-full" />
                           )}
                           Regenerate with AI
                         </button>
@@ -912,6 +1039,218 @@ export function DashboardClient({
                     </button>
                   </div>
                 )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Settings slide-in panel */}
+      <AnimatePresence>
+        {showSettings && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.4 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSettings(false)}
+              className="fixed inset-0 bg-ink z-40"
+            />
+
+            {/* Panel */}
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ duration: 0.28, ease: "easeOut" }}
+              className="fixed right-0 top-0 bottom-0 w-[400px] max-w-full bg-paper border-l border-mist z-50 overflow-y-auto"
+            >
+              <div className="px-8 py-8">
+                <div className="flex items-center justify-between mb-8">
+                  <h2 className="font-serif text-xl font-semibold text-ink">
+                    Settings
+                  </h2>
+                  <button
+                    onClick={() => setShowSettings(false)}
+                    className="p-2 rounded-lg text-stone hover:text-ink hover:bg-mist/50 transition-colors"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Account section */}
+                <div className="space-y-6">
+                  <div>
+                    <p className="text-xs font-medium text-stone uppercase tracking-wide mb-4">
+                      Account
+                    </p>
+                    <div className="space-y-4">
+                      {/* Name - editable */}
+                      <div>
+                        <label className="block text-sm text-stone mb-1">Name</label>
+                        {editingName ? (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={tempName}
+                              onChange={(e) => setTempName(e.target.value)}
+                              className="flex-1 px-3 py-2 border border-mist rounded-lg text-ink focus:outline-none focus:ring-2 focus:ring-accent-blue/30"
+                              autoFocus
+                            />
+                            <button
+                              onClick={handleSaveName}
+                              disabled={isSavingName}
+                              className="px-4 py-2 bg-accent-blue text-paper rounded-lg text-sm hover:bg-accent-blue/90 disabled:opacity-50"
+                            >
+                              {isSavingName ? "..." : "Save"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingName(false);
+                                setTempName(teacher.full_name || "");
+                              }}
+                              className="px-3 py-2 text-stone hover:text-ink"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <p className="text-ink">{teacher.full_name}</p>
+                            <button
+                              onClick={() => setEditingName(true)}
+                              className="text-sm text-accent-blue hover:underline"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Email - read only */}
+                      <div>
+                        <label className="block text-sm text-stone mb-1">Email</label>
+                        <p className="text-ink">{teacher.email}</p>
+                      </div>
+
+                      {/* Role - read only */}
+                      <div>
+                        <label className="block text-sm text-stone mb-1">Role</label>
+                        <p className="text-ink">Teacher</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* School section */}
+                  <div className="pt-4 border-t border-mist">
+                    <p className="text-xs font-medium text-stone uppercase tracking-wide mb-4">
+                      School
+                    </p>
+                    <p className="text-ink">{school.name}</p>
+                  </div>
+
+                  {/* Sign out */}
+                  <div className="pt-6 border-t border-mist">
+                    <button
+                      onClick={handleSignOut}
+                      className="text-sm text-alert hover:underline"
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Command Palette (Cmd+K) */}
+      <CommandPalette
+        onCreateAssessment={() => setCreateStep("passage")}
+        sessions={sessions.map(s => ({
+          id: s.id,
+          students: s.students,
+          assessments: { class_label: s.assessments.class_label }
+        }))}
+      />
+
+      {/* Delete confirmation modal */}
+      <AnimatePresence>
+        {deleteSession && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={closeDeleteConfirm}
+              className="fixed inset-0 bg-ink z-50"
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.15 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            >
+              <div
+                className="bg-paper rounded-xl shadow-xl max-w-md w-full p-6"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className="font-serif text-xl font-semibold text-ink mb-2">
+                  Delete this reading?
+                </h3>
+                <p className="text-sm text-stone mb-1">
+                  <span className="font-medium text-ink">
+                    {deleteSession.students.first_name} {deleteSession.students.last_name}
+                  </span>
+                  {" · "}
+                  {deleteSession.assessments.passages.title}
+                </p>
+                <p className="text-sm text-stone mb-6">
+                  This action cannot be undone. The recording and all data will be permanently removed.
+                </p>
+
+                <div className="mb-6">
+                  <label className="block text-sm text-stone mb-2">
+                    Type <span className="font-mono font-medium text-ink">delete</span> to confirm
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    placeholder="delete"
+                    className="w-full px-4 py-3 border border-mist rounded-lg text-ink placeholder:text-stone/50 focus:outline-none focus:ring-2 focus:ring-alert/30 focus:border-alert"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && deleteConfirmText.toLowerCase() === "delete") {
+                        handleDeleteSession();
+                      }
+                    }}
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={closeDeleteConfirm}
+                    className="flex-1 px-4 py-3 rounded-lg text-stone hover:bg-mist transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDeleteSession}
+                    disabled={deleteConfirmText.toLowerCase() !== "delete" || isDeleting}
+                    className="flex-1 px-4 py-3 rounded-lg bg-alert text-paper font-medium hover:bg-alert/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isDeleting ? "Deleting..." : "Delete permanently"}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </>

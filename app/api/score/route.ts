@@ -5,11 +5,12 @@ import { v4 as uuidv4 } from "uuid";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { alignWords } from "@/lib/scoring/alignment";
-import { calculateMetrics, analyzeErrorPatterns } from "@/lib/scoring/metrics";
+import { calculateMetrics } from "@/lib/scoring/metrics";
+import { computeErrorPatterns, toLegacyPatterns } from "@/lib/scoring/patterns";
 import { generateSummary } from "@/lib/scoring/summary";
 import { analyzeProsody } from "@/lib/scoring/prosody";
 import { extractPeaks } from "@/lib/scoring/waveform";
-import { DeepgramWord, SessionEvent, ScoringMetrics, ProsodyScore, ErrorPattern } from "@/lib/scoring/types";
+import { DeepgramWord, SessionEvent, ScoringMetrics, ProsodyScore, EnhancedErrorPattern } from "@/lib/scoring/types";
 
 const deepgram = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY! });
 
@@ -19,7 +20,7 @@ interface ScoringResult {
   metrics: ScoringMetrics;
   prosody: ProsodyScore | null;
   summary: string;
-  errorPatterns: ErrorPattern[];
+  errorPatterns: EnhancedErrorPattern[];
   avgConfidence: number;
   transcript: string;
   waveformPeaks: number[];
@@ -65,7 +66,7 @@ async function runScoringPipeline(
 
   // Layer 3: Calculate metrics
   const metrics = calculateMetrics(events, durationSeconds);
-  const errorPatterns = analyzeErrorPatterns(events);
+  const errorPatterns = computeErrorPatterns(events);
 
   // Calculate average confidence
   const confidenceScores = events

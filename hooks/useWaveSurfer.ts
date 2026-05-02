@@ -8,6 +8,7 @@ export interface UseWaveSurferOptions {
   waveColor?: string;
   progressColor?: string;
   cursorColor?: string;
+  cursorWidth?: number;
   height?: number;
   barWidth?: number;
   barGap?: number;
@@ -33,6 +34,7 @@ const DEFAULT_OPTIONS: Required<Omit<UseWaveSurferOptions, "url">> = {
   waveColor: "#71716E", // stone
   progressColor: "#0A0A0A", // ink
   cursorColor: "#1E40AF", // accent-blue
+  cursorWidth: 2,
   height: 64,
   barWidth: 2,
   barGap: 2,
@@ -69,6 +71,7 @@ export function useWaveSurfer(options: UseWaveSurferOptions = {}): UseWaveSurfer
       waveColor: mergedOptions.waveColor,
       progressColor: mergedOptions.progressColor,
       cursorColor: mergedOptions.cursorColor,
+      cursorWidth: mergedOptions.cursorWidth,
       height: mergedOptions.height,
       barWidth: mergedOptions.barWidth,
       barGap: mergedOptions.barGap,
@@ -98,9 +101,25 @@ export function useWaveSurfer(options: UseWaveSurferOptions = {}): UseWaveSurfer
       setCurrentTime(ws.getCurrentTime());
     });
 
+    // Suppress AbortError when component unmounts during audio loading
+    ws.on("error", (err: Error) => {
+      if (err.name === "AbortError") {
+        // Expected when rapidly toggling or unmounting during load
+        return;
+      }
+      console.error("WaveSurfer error:", err);
+    });
+
     // Load audio if URL provided
+    // Catch the promise to prevent unhandled rejection when component unmounts during load
     if (mergedOptions.url) {
-      ws.load(mergedOptions.url);
+      ws.load(mergedOptions.url).catch((err: Error) => {
+        if (err.name === "AbortError") {
+          // Expected when component unmounts during load
+          return;
+        }
+        console.error("WaveSurfer load error:", err);
+      });
     }
 
     return () => {

@@ -136,21 +136,36 @@ function ComprehensionContent({ token }: { token: string }) {
     }
   };
 
-  // Loading state
+  // Loading state - question skeleton
   if (state === "loading") {
     return (
-      <div className="min-h-screen bg-paper flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-mist border-t-accent-blue rounded-full animate-spin" />
+      <div className="min-h-screen bg-paper flex flex-col">
+        <div className="pt-8 px-6">
+          <div className="max-w-[600px] mx-auto">
+            <div className="skeleton-shimmer h-4 w-32 rounded mb-2" />
+            <div className="skeleton-shimmer h-6 w-48 rounded" />
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center px-6 py-8">
+          <div className="max-w-[600px] w-full space-y-6">
+            <div className="skeleton-shimmer h-6 w-24 rounded-full" />
+            <div className="skeleton-shimmer h-8 w-full rounded" />
+            <div className="skeleton-shimmer h-32 w-full rounded-lg" />
+          </div>
+        </div>
       </div>
     );
   }
 
-  // Error state
+  // Error state - calm serif design
   if (state === "error" || questions.length === 0) {
     return (
-      <div className="min-h-screen bg-paper flex items-center justify-center px-6">
-        <p className="font-serif text-xl text-ink italic">
+      <div className="min-h-screen bg-paper flex flex-col items-center justify-center px-6">
+        <p className="font-serif text-xl text-ink italic text-center">
           Unable to load questions.
+        </p>
+        <p className="text-sm text-stone mt-2 text-center">
+          Your reading has been saved.
         </p>
       </div>
     );

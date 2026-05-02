@@ -1,7 +1,16 @@
 import type { NextConfig } from "next";
+import withSerwistInit from "@serwist/next";
+
+const withSerwist = withSerwistInit({
+  swSrc: "app/sw.ts",
+  swDest: "public/sw.js",
+  disable: process.env.NODE_ENV === "development",
+});
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Use webpack for builds (required for Serwist)
+  // This can be removed once Serwist supports Turbopack
+  turbopack: {},
 };
 
-export default nextConfig;
+export default withSerwist(nextConfig);

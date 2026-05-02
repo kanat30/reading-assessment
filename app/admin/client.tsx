@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,7 @@ interface AdminClientProps {
 }
 
 type PanelMode = "closed" | "add-teacher" | "add-school" | "reset-password";
+type ActiveTab = "users" | "schools";
 
 export function AdminClient({ currentUser, teachers: initialTeachers, schools: initialSchools }: AdminClientProps) {
   const router = useRouter();
@@ -45,8 +47,9 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
   const [schools, setSchools] = useState(initialSchools);
   const [panelMode, setPanelMode] = useState<PanelMode>("closed");
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("users");
 
-  // Add teacher form state
+  // Form state
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [schoolId, setSchoolId] = useState("");
@@ -55,11 +58,7 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
-  // Add school form state
   const [newSchoolName, setNewSchoolName] = useState("");
-
-  // Reset password state
   const [newPassword, setNewPassword] = useState("");
 
   const closePanel = () => {
@@ -96,20 +95,15 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
       }
 
       if (result.success && result.teacher) {
-        setSuccess(
-          useInvite
-            ? `Invite sent to ${email}. They will receive an email to set their password.`
-            : `Account created for ${email}. They can log in with the password you set.`
-        );
+        setSuccess(useInvite ? `Invite sent to ${email}` : `Account created for ${email}`);
         router.refresh();
-        setTimeout(closePanel, 2000);
+        setTimeout(closePanel, 1500);
       } else {
         setError(result.error || "Failed to create teacher");
       }
-    } catch (err) {
+    } catch {
       setError("An unexpected error occurred");
     }
-
     setIsSubmitting(false);
   };
 
@@ -128,10 +122,9 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
       } else {
         setError(result.error || "Failed to create school");
       }
-    } catch (err) {
+    } catch {
       setError("An unexpected error occurred");
     }
-
     setIsSubmitting(false);
   };
 
@@ -149,10 +142,9 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
       } else {
         setError(result.error || "Failed to reset password");
       }
-    } catch (err) {
+    } catch {
       setError("An unexpected error occurred");
     }
-
     setIsSubmitting(false);
   };
 
@@ -161,10 +153,9 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
       alert("You cannot delete your own account");
       return;
     }
-    if (!confirm(`Are you sure you want to delete ${teacher.full_name}? This will also delete all their assessments.`)) {
+    if (!confirm(`Delete ${teacher.full_name}? This will also delete their assessments.`)) {
       return;
     }
-
     const result = await deleteTeacher(teacher.id);
     if (result.success) {
       router.refresh();
@@ -178,11 +169,9 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
       alert("You cannot change your own role");
       return;
     }
-
     const result = teacher.role === "admin"
       ? await demoteToTeacher(teacher.id)
       : await promoteToAdmin(teacher.id);
-
     if (result.success) {
       router.refresh();
     } else {
@@ -190,26 +179,32 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
     }
   };
 
+  const adminCount = teachers.filter((t) => t.role === "admin").length;
+  const teacherCount = teachers.filter((t) => t.role === "teacher").length;
+
   return (
-    <div className="min-h-screen bg-paper">
-      {/* Header */}
-      <header className="border-b border-mist px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <span className="text-xs font-medium bg-accent-blue/10 text-accent-blue px-2 py-1 rounded">
-              Admin
+    <div className="min-h-screen bg-cream">
+      {/* Compact Header */}
+      <header className="bg-paper border-b border-mist">
+        <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold bg-ink text-paper px-2 py-0.5 rounded">
+              ADMIN
             </span>
-            <div>
-              <p className="font-medium text-ink">{currentUser.full_name}</p>
-              <p className="text-sm text-stone">{currentUser.email}</p>
-            </div>
+            <span className="text-sm text-ink">{currentUser.full_name}</span>
           </div>
-          <div className="flex items-center gap-4">
-            <a href="/dashboard" className="text-sm text-accent-blue hover:underline">
-              Teacher Dashboard
-            </a>
+          <div className="flex items-center gap-5 text-sm">
+            <Link href="/admin/analytics" className="text-stone hover:text-ink">
+              AI Analytics
+            </Link>
+            <Link
+              href="/dashboard"
+              className="bg-accent-blue/10 text-accent-blue px-3 py-1 rounded hover:bg-accent-blue/20 transition-colors"
+            >
+              → Dashboard
+            </Link>
             <form action={signOut}>
-              <button type="submit" className="text-sm text-stone hover:text-ink">
+              <button type="submit" className="text-stone hover:text-ink">
                 Sign out
               </button>
             </form>
@@ -217,116 +212,160 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="max-w-6xl mx-auto px-6 py-12">
-        {/* Actions */}
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="font-serif text-2xl font-semibold text-ink">User Management</h1>
-          <div className="flex gap-3">
-            <Button
-              onClick={() => setPanelMode("add-school")}
-              variant="outline"
-              className="border-mist"
-            >
-              Add School
-            </Button>
-            <Button
-              onClick={() => setPanelMode("add-teacher")}
-              className="bg-accent-blue text-paper hover:bg-accent-blue/90"
-            >
-              Add Teacher
-            </Button>
+      <main className="max-w-5xl mx-auto px-6 py-8">
+        {/* Stats Row */}
+        <div className="flex items-center gap-8 mb-8 text-sm">
+          <div>
+            <span className="text-2xl font-semibold text-ink">{teachers.length}</span>
+            <span className="text-stone ml-2">users</span>
           </div>
+          <div className="w-px h-6 bg-mist" />
+          <div>
+            <span className="text-2xl font-semibold text-ink">{schools.length}</span>
+            <span className="text-stone ml-2">schools</span>
+          </div>
+          <div className="w-px h-6 bg-mist" />
+          <div>
+            <span className="text-2xl font-semibold text-ink">{adminCount}</span>
+            <span className="text-stone ml-2">admins</span>
+          </div>
+          <div className="flex-1" />
+          <Button
+            onClick={() => setPanelMode("add-teacher")}
+            size="sm"
+            className="bg-accent-blue text-paper hover:bg-accent-blue/90"
+          >
+            + Add User
+          </Button>
+          <Button
+            onClick={() => setPanelMode("add-school")}
+            variant="outline"
+            size="sm"
+          >
+            + Add School
+          </Button>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-4 mb-8">
-          <div className="bg-mist/30 rounded-lg p-4">
-            <p className="text-2xl font-semibold text-ink">{teachers.length}</p>
-            <p className="text-sm text-stone">Teachers</p>
-          </div>
-          <div className="bg-mist/30 rounded-lg p-4">
-            <p className="text-2xl font-semibold text-ink">{schools.length}</p>
-            <p className="text-sm text-stone">Schools</p>
-          </div>
-          <div className="bg-mist/30 rounded-lg p-4">
-            <p className="text-2xl font-semibold text-ink">
-              {teachers.filter((t) => t.role === "admin").length}
-            </p>
-            <p className="text-sm text-stone">Admins</p>
-          </div>
+        {/* Tabs */}
+        <div className="flex gap-1 mb-6 border-b border-mist">
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === "users"
+                ? "border-ink text-ink"
+                : "border-transparent text-stone hover:text-ink"
+            }`}
+          >
+            Users ({teachers.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("schools")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === "schools"
+                ? "border-ink text-ink"
+                : "border-transparent text-stone hover:text-ink"
+            }`}
+          >
+            Schools ({schools.length})
+          </button>
         </div>
 
-        {/* Teachers table */}
-        <div className="bg-paper border border-mist rounded-lg overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-mist bg-mist/20">
-                <th className="text-left p-4 text-sm font-medium text-stone">Name</th>
-                <th className="text-left p-4 text-sm font-medium text-stone">Email</th>
-                <th className="text-left p-4 text-sm font-medium text-stone">School</th>
-                <th className="text-left p-4 text-sm font-medium text-stone">Role</th>
-                <th className="text-right p-4 text-sm font-medium text-stone">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {teachers.map((teacher) => (
-                <tr key={teacher.id} className="border-b border-mist last:border-0 hover:bg-mist/10">
-                  <td className="p-4">
-                    <p className="font-medium text-ink">{teacher.full_name}</p>
-                  </td>
-                  <td className="p-4 text-stone">{teacher.email}</td>
-                  <td className="p-4 text-stone">{teacher.schools?.name || "—"}</td>
-                  <td className="p-4">
-                    <span
-                      className={`text-xs font-medium px-2 py-1 rounded ${
+        {/* Users Tab */}
+        {activeTab === "users" && (
+          <div className="bg-paper rounded-lg border border-mist overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-mist bg-mist/30">
+                  <th className="text-left px-4 py-2.5 font-medium text-stone">Name</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-stone">Email</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-stone">School</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-stone">Role</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-stone">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {teachers.map((teacher) => (
+                  <tr key={teacher.id} className="border-b border-mist/50 last:border-0 hover:bg-mist/20">
+                    <td className="px-4 py-2.5 font-medium text-ink">{teacher.full_name}</td>
+                    <td className="px-4 py-2.5 text-stone">{teacher.email}</td>
+                    <td className="px-4 py-2.5 text-stone">{teacher.schools?.name || "—"}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
                         teacher.role === "admin"
                           ? "bg-accent-blue/10 text-accent-blue"
                           : "bg-mist text-stone"
-                      }`}
-                    >
-                      {teacher.role}
-                    </span>
-                  </td>
-                  <td className="p-4">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => {
-                          setSelectedTeacher(teacher);
-                          setPanelMode("reset-password");
-                        }}
-                        className="text-xs text-accent-blue hover:underline"
-                      >
-                        Reset password
-                      </button>
-                      <button
-                        onClick={() => handleToggleRole(teacher)}
-                        className="text-xs text-stone hover:text-ink"
-                        disabled={teacher.id === currentUser.id}
-                      >
-                        {teacher.role === "admin" ? "Demote" : "Promote"}
-                      </button>
-                      <button
-                        onClick={() => handleDeleteTeacher(teacher)}
-                        className="text-xs text-danger hover:underline"
-                        disabled={teacher.id === currentUser.id}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
+                      }`}>
+                        {teacher.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center justify-end gap-3 text-xs">
+                        <button
+                          onClick={() => { setSelectedTeacher(teacher); setPanelMode("reset-password"); }}
+                          className="text-accent-blue hover:underline"
+                        >
+                          Reset
+                        </button>
+                        <button
+                          onClick={() => handleToggleRole(teacher)}
+                          className="text-stone hover:text-ink disabled:opacity-30"
+                          disabled={teacher.id === currentUser.id}
+                        >
+                          {teacher.role === "admin" ? "Demote" : "Promote"}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTeacher(teacher)}
+                          className="text-alert hover:underline disabled:opacity-30"
+                          disabled={teacher.id === currentUser.id}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Schools Tab */}
+        {activeTab === "schools" && (
+          <div className="bg-paper rounded-lg border border-mist overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-mist bg-mist/30">
+                  <th className="text-left px-4 py-2.5 font-medium text-stone">School Name</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-stone">Teachers</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {schools.map((school) => {
+                  const schoolTeachers = teachers.filter(t => t.school_id === school.id);
+                  return (
+                    <tr key={school.id} className="border-b border-mist/50 last:border-0 hover:bg-mist/20">
+                      <td className="px-4 py-2.5 font-medium text-ink">{school.name}</td>
+                      <td className="px-4 py-2.5 text-stone">{schoolTeachers.length}</td>
+                    </tr>
+                  );
+                })}
+                {schools.length === 0 && (
+                  <tr>
+                    <td colSpan={2} className="px-4 py-8 text-center text-stone">
+                      No schools yet. Add your first school above.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </main>
 
-      {/* Slide-in panel */}
+      {/* Slide-in Panel */}
       <AnimatePresence>
         {panelMode !== "closed" && (
           <>
-            {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -334,240 +373,78 @@ export function AdminClient({ currentUser, teachers: initialTeachers, schools: i
               onClick={closePanel}
               className="fixed inset-0 bg-ink/20 z-40"
             />
-
-            {/* Panel */}
             <motion.div
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-paper shadow-xl z-50 overflow-y-auto"
+              className="fixed right-0 top-0 bottom-0 w-full max-w-sm bg-paper shadow-xl z-50 overflow-y-auto"
             >
-              <div className="p-6">
-                {/* Close button */}
-                <button
-                  onClick={closePanel}
-                  className="absolute top-4 right-4 text-stone hover:text-ink"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="p-5">
+                <button onClick={closePanel} className="absolute top-4 right-4 text-stone hover:text-ink">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
 
-                {/* Add Teacher Form */}
+                {/* Add Teacher */}
                 {panelMode === "add-teacher" && (
-                  <form onSubmit={handleAddTeacher}>
-                    <h2 className="font-serif text-xl font-semibold text-ink mb-6">
-                      Add Teacher
-                    </h2>
-
-                    {error && (
-                      <div className="mb-4 p-3 bg-danger/10 border border-danger/20 rounded-lg text-sm text-danger">
-                        {error}
-                      </div>
-                    )}
-
-                    {success && (
-                      <div className="mb-4 p-3 bg-success/10 border border-success/20 rounded-lg text-sm text-success">
-                        {success}
-                      </div>
-                    )}
-
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-ink mb-1">
-                          Full Name
-                        </label>
-                        <Input
-                          value={fullName}
-                          onChange={(e) => setFullName(e.target.value)}
-                          placeholder="Jane Smith"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-ink mb-1">
-                          Email
-                        </label>
-                        <Input
-                          type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="jane@school.edu"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-ink mb-1">
-                          School
-                        </label>
-                        <select
-                          value={schoolId}
-                          onChange={(e) => setSchoolId(e.target.value)}
-                          className="w-full h-10 px-3 rounded-md border border-mist bg-paper text-ink"
-                          required
-                        >
-                          <option value="">Select a school</option>
-                          {schools.map((school) => (
-                            <option key={school.id} value={school.id}>
-                              {school.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Toggle between invite and password */}
-                      <div className="border border-mist rounded-lg p-4">
-                        <div className="flex gap-2 mb-4">
-                          <button
-                            type="button"
-                            onClick={() => setUseInvite(false)}
-                            className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-colors ${
-                              !useInvite
-                                ? "bg-accent-blue text-paper"
-                                : "bg-mist/50 text-stone hover:text-ink"
-                            }`}
-                          >
-                            Set Password
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setUseInvite(true)}
-                            className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-colors ${
-                              useInvite
-                                ? "bg-accent-blue text-paper"
-                                : "bg-mist/50 text-stone hover:text-ink"
-                            }`}
-                          >
-                            Send Invite
-                          </button>
-                        </div>
-
-                        {useInvite ? (
-                          <p className="text-sm text-stone">
-                            Teacher will receive an email to set their own password.
-                          </p>
-                        ) : (
-                          <div>
-                            <label className="block text-sm font-medium text-ink mb-1">
-                              Password
-                            </label>
-                            <Input
-                              type="text"
-                              value={password}
-                              onChange={(e) => setPassword(e.target.value)}
-                              placeholder="Enter a default password"
-                              required={!useInvite}
-                            />
-                            <p className="text-xs text-stone mt-1">
-                              Share this password with the teacher. They can change it later.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <Button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full mt-6 bg-accent-blue text-paper py-3 h-auto rounded-lg hover:bg-accent-blue/90 disabled:opacity-50"
+                  <form onSubmit={handleAddTeacher} className="space-y-4">
+                    <h2 className="font-semibold text-ink text-lg">Add User</h2>
+                    {error && <p className="text-sm text-alert bg-alert/10 px-3 py-2 rounded">{error}</p>}
+                    {success && <p className="text-sm text-success bg-success/10 px-3 py-2 rounded">{success}</p>}
+                    <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Full name" required />
+                    <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" required />
+                    <select
+                      value={schoolId}
+                      onChange={(e) => setSchoolId(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-mist bg-paper text-sm"
+                      required
                     >
-                      {isSubmitting
-                        ? "Creating..."
-                        : useInvite
-                        ? "Send Invite"
-                        : "Create Account"}
+                      <option value="">Select school</option>
+                      {schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setUseInvite(false)}
+                        className={`flex-1 py-2 text-sm rounded ${!useInvite ? "bg-ink text-paper" : "bg-mist text-stone"}`}>
+                        Set Password
+                      </button>
+                      <button type="button" onClick={() => setUseInvite(true)}
+                        className={`flex-1 py-2 text-sm rounded ${useInvite ? "bg-ink text-paper" : "bg-mist text-stone"}`}>
+                        Send Invite
+                      </button>
+                    </div>
+                    {!useInvite && (
+                      <Input type="text" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required />
+                    )}
+                    <Button type="submit" disabled={isSubmitting} className="w-full bg-accent-blue text-paper">
+                      {isSubmitting ? "Creating..." : useInvite ? "Send Invite" : "Create User"}
                     </Button>
                   </form>
                 )}
 
-                {/* Add School Form */}
+                {/* Add School */}
                 {panelMode === "add-school" && (
-                  <form onSubmit={handleAddSchool}>
-                    <h2 className="font-serif text-xl font-semibold text-ink mb-6">
-                      Add School
-                    </h2>
-
-                    {error && (
-                      <div className="mb-4 p-3 bg-danger/10 border border-danger/20 rounded-lg text-sm text-danger">
-                        {error}
-                      </div>
-                    )}
-
-                    {success && (
-                      <div className="mb-4 p-3 bg-success/10 border border-success/20 rounded-lg text-sm text-success">
-                        {success}
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="block text-sm font-medium text-ink mb-1">
-                        School Name
-                      </label>
-                      <Input
-                        value={newSchoolName}
-                        onChange={(e) => setNewSchoolName(e.target.value)}
-                        placeholder="Lincoln Elementary"
-                        required
-                      />
-                    </div>
-
-                    <Button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full mt-6 bg-accent-blue text-paper py-3 h-auto rounded-lg hover:bg-accent-blue/90 disabled:opacity-50"
-                    >
+                  <form onSubmit={handleAddSchool} className="space-y-4">
+                    <h2 className="font-semibold text-ink text-lg">Add School</h2>
+                    {error && <p className="text-sm text-alert bg-alert/10 px-3 py-2 rounded">{error}</p>}
+                    {success && <p className="text-sm text-success bg-success/10 px-3 py-2 rounded">{success}</p>}
+                    <Input value={newSchoolName} onChange={(e) => setNewSchoolName(e.target.value)} placeholder="School name" required />
+                    <Button type="submit" disabled={isSubmitting} className="w-full bg-accent-blue text-paper">
                       {isSubmitting ? "Creating..." : "Create School"}
                     </Button>
                   </form>
                 )}
 
-                {/* Reset Password Form */}
+                {/* Reset Password */}
                 {panelMode === "reset-password" && selectedTeacher && (
-                  <form onSubmit={handleResetPassword}>
-                    <h2 className="font-serif text-xl font-semibold text-ink mb-2">
-                      Reset Password
-                    </h2>
-                    <p className="text-sm text-stone mb-6">
-                      Set a new password for {selectedTeacher.full_name}
-                    </p>
-
-                    {error && (
-                      <div className="mb-4 p-3 bg-danger/10 border border-danger/20 rounded-lg text-sm text-danger">
-                        {error}
-                      </div>
-                    )}
-
-                    {success && (
-                      <div className="mb-4 p-3 bg-success/10 border border-success/20 rounded-lg text-sm text-success">
-                        {success}
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="block text-sm font-medium text-ink mb-1">
-                        New Password
-                      </label>
-                      <Input
-                        type="text"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="Enter new password"
-                        required
-                        minLength={6}
-                      />
-                      <p className="text-xs text-stone mt-1">
-                        Minimum 6 characters. Share this password with the teacher.
-                      </p>
-                    </div>
-
-                    <Button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full mt-6 bg-accent-blue text-paper py-3 h-auto rounded-lg hover:bg-accent-blue/90 disabled:opacity-50"
-                    >
+                  <form onSubmit={handleResetPassword} className="space-y-4">
+                    <h2 className="font-semibold text-ink text-lg">Reset Password</h2>
+                    <p className="text-sm text-stone">For {selectedTeacher.full_name}</p>
+                    {error && <p className="text-sm text-alert bg-alert/10 px-3 py-2 rounded">{error}</p>}
+                    {success && <p className="text-sm text-success bg-success/10 px-3 py-2 rounded">{success}</p>}
+                    <Input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New password" required minLength={6} />
+                    <Button type="submit" disabled={isSubmitting} className="w-full bg-accent-blue text-paper">
                       {isSubmitting ? "Resetting..." : "Reset Password"}
                     </Button>
                   </form>

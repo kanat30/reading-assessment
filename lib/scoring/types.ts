@@ -32,6 +32,15 @@ export interface ErrorPattern {
   total: number;
 }
 
+// Enhanced error pattern interface for Week 5
+export interface EnhancedErrorPattern {
+  id: string;                    // 'multisyllabic' | 'suffix-tion' | 'function-words' | etc.
+  label: string;                 // human-readable
+  description: string;           // one short sentence
+  matched_words: string[];       // unique expected words that matched
+  event_count: number;
+}
+
 // Prosody assessment based on NAEP Oral Reading Fluency Scale
 export interface ProsodyScore {
   level: 1 | 2 | 3 | 4;

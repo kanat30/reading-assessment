@@ -31,6 +31,7 @@ export function SyncedTranscript({
     eventMap.set(e.word_index, e);
   });
 
+
   // Create word timing data (for seeking)
   const wordTimings = events.map((e) => ({
     index: e.word_index,
@@ -94,14 +95,20 @@ export function SyncedTranscript({
       classes += "bg-accent-blue/10 ";
     }
 
-    // Error styling
+    // Word styling based on event type
     if (event) {
       if (event.event_type === "substitution" || event.event_type === "omission") {
+        // Hard errors: wrong word or skipped word
         classes += "text-alert border-b border-dotted border-alert ";
-      } else if (event.event_type === "self_correction") {
-        classes += "text-warning ";
+      } else if (event.event_type === "mispronunciation" || event.event_type === "self_correction") {
+        // Hesitations: unclear pronunciation or self-corrected
+        classes += "text-warning border-b border-dotted border-warning ";
+      } else {
+        // Correct words
+        classes += "text-ink hover:bg-mist/50 ";
       }
     } else {
+      // Words without events (not yet reached or no data)
       classes += "text-ink hover:bg-mist/50 ";
     }
 
@@ -118,6 +125,9 @@ export function SyncedTranscript({
       return "Word was skipped";
     } else if (event.event_type === "self_correction") {
       return `First said "${event.spoken_word}", then corrected`;
+    } else if (event.event_type === "mispronunciation") {
+      const confidence = event.confidence_score ? Math.round(event.confidence_score * 100) : 0;
+      return `Unclear pronunciation (${confidence}% confidence)`;
     }
     return undefined;
   };
