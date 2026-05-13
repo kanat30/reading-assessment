@@ -26,6 +26,7 @@ type RecordingState =
   | "checking-mic"
   | "mic-denied"
   | "ready"
+  | "initializing"
   | "recording"
   | "uploading"
   | "offline"
@@ -173,9 +174,30 @@ function RecordingContent({ token }: { token: string }) {
   }, [token]);
 
   const handleStartRecording = async () => {
+    setState("initializing");
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+
+      // Wait for audio track to be fully live (handles hardware warm-up)
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack && audioTrack.readyState !== "live") {
+        await new Promise<void>((resolve) => {
+          const checkState = () => {
+            if (audioTrack.readyState === "live") {
+              resolve();
+            } else {
+              requestAnimationFrame(checkState);
+            }
+          };
+          checkState();
+        });
+      }
+
+      // Additional delay for hardware initialization on first permission grant
+      // This allows microphone hardware to fully spin up before capturing
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
       // Configure MediaRecorder with Opus codec, 1s chunks
       const mediaRecorder = new MediaRecorder(stream, {
@@ -209,8 +231,14 @@ function RecordingContent({ token }: { token: string }) {
         }
       };
 
-      // Request data every 1 second
-      mediaRecorder.start(1000);
+      // Wait for MediaRecorder to actually start before updating UI
+      await new Promise<void>((resolve, reject) => {
+        mediaRecorder.onstart = () => resolve();
+        mediaRecorder.onerror = (e) => reject(e);
+        // Request data every 1 second
+        mediaRecorder.start(1000);
+      });
+
       startTimeRef.current = Date.now();
       setState("recording");
 
@@ -484,6 +512,28 @@ function RecordingContent({ token }: { token: string }) {
                 Start recording
               </p>
               <p className="text-sm text-stone">Read the passage aloud</p>
+            </motion.div>
+          )}
+
+          {state === "initializing" && (
+            <motion.div
+              key="initializing"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-center py-6 px-6"
+            >
+              <div className="w-16 h-16 rounded-full bg-accent-blue/20 flex items-center justify-center mb-4">
+                <motion.div
+                  className="w-8 h-8 rounded-full border-2 border-accent-blue border-t-transparent"
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                />
+              </div>
+              <p className="text-base text-ink font-medium">
+                Getting ready...
+              </p>
+              <p className="text-sm text-stone">Preparing your microphone</p>
             </motion.div>
           )}
 

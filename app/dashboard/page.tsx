@@ -61,6 +61,20 @@ export default async function DashboardPage() {
     .select("*")
     .order("word_count", { ascending: true });
 
+  // Get assessment templates for the teacher's school
+  const { data: templates } = await supabase
+    .from("assessment_templates")
+    .select(`
+      id,
+      name,
+      passage_id,
+      questions,
+      created_at,
+      passages(id, title, grade_band, word_count)
+    `)
+    .eq("school_id", teacher.school_id)
+    .order("created_at", { ascending: false });
+
   // Transform sessions to match expected types (Supabase returns nested objects)
   const transformedSessions = (sessions || []).map((s) => ({
     ...s,
@@ -73,6 +87,12 @@ export default async function DashboardPage() {
     },
   }));
 
+  // Transform templates to match expected types
+  const transformedTemplates = (templates || []).map((t) => ({
+    ...t,
+    passages: t.passages as unknown as { id: string; title: string; grade_band: string; word_count: number },
+  }));
+
   return (
     <DashboardClient
       teacher={teacher}
@@ -80,6 +100,7 @@ export default async function DashboardPage() {
       sessions={transformedSessions}
       classLabels={classLabels as string[]}
       passages={passages || []}
+      templates={transformedTemplates}
     />
   );
 }

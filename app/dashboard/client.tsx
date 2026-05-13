@@ -88,15 +88,31 @@ interface Question {
   question_type: "literal" | "inferential";
 }
 
+interface Template {
+  id: string;
+  name: string;
+  passage_id: string;
+  questions: Question[];
+  created_at: string;
+  passages: {
+    id: string;
+    title: string;
+    grade_band: string;
+    word_count: number;
+  };
+}
+
 interface DashboardClientProps {
   teacher: Teacher;
   school: School;
   sessions: Session[];
   classLabels: string[];
   passages: Passage[];
+  templates: Template[];
 }
 
-type CreateStep = "closed" | "passage" | "questions" | "label" | "done";
+type CreateStep = "closed" | "choose" | "passage" | "questions" | "label" | "done";
+type ExpirationDuration = "none" | "1h" | "1d" | "1w" | "1m";
 
 export function DashboardClient({
   teacher,
@@ -104,10 +120,12 @@ export function DashboardClient({
   sessions: initialSessions,
   classLabels: initialClassLabels,
   passages,
+  templates: initialTemplates,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeFilter = searchParams.get("class") || "all";
+  const activeDateFilter = searchParams.get("date") || "all";
 
   const [sessions, setSessions] = useState(initialSessions);
   const [classLabels, setClassLabels] = useState(initialClassLabels);
@@ -140,26 +158,68 @@ export function DashboardClient({
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Templates state
+  const [templates, setTemplates] = useState(initialTemplates);
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+
+  // Link expiration state
+  const [expirationDuration, setExpirationDuration] = useState<ExpirationDuration>("none");
+
+  // Numbered students state
+  const [useNumberedStudents, setUseNumberedStudents] = useState(false);
+  const [expectedStudentCount, setExpectedStudentCount] = useState(20);
+
   const supabase = createClient();
 
-  // Filter sessions by class label
-  const filteredSessions =
+  // Filter sessions by class label and date
+  const filterSessionsByDate = (sessions: Session[]) => {
+    if (activeDateFilter === "all") return sessions;
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(startOfToday);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); // Sunday
+
+    return sessions.filter((s) => {
+      const sessionDate = new Date(s.scored_at || s.created_at);
+      if (activeDateFilter === "today") {
+        return sessionDate >= startOfToday;
+      } else if (activeDateFilter === "week") {
+        return sessionDate >= startOfWeek;
+      }
+      return true;
+    });
+  };
+
+  const filteredSessions = filterSessionsByDate(
     activeFilter === "all"
       ? sessions
       : sessions.filter(
           (s) =>
             s.assessments.class_label?.toLowerCase().replace(/\s+/g, "-") ===
             activeFilter
-        );
+        )
+  );
 
-  // Handle class filter change
+  // Handle class filter change (preserves date filter)
   const handleFilterChange = (label: string) => {
     const slug = label === "all" ? "all" : label.toLowerCase().replace(/\s+/g, "-");
-    if (slug === "all") {
-      router.push("/dashboard", { scroll: false });
-    } else {
-      router.push(`/dashboard?class=${slug}`, { scroll: false });
-    }
+    const params = new URLSearchParams();
+    if (slug !== "all") params.set("class", slug);
+    if (activeDateFilter !== "all") params.set("date", activeDateFilter);
+    const query = params.toString();
+    router.push(query ? `/dashboard?${query}` : "/dashboard", { scroll: false });
+  };
+
+  // Handle date filter change (preserves class filter)
+  const handleDateFilterChange = (dateFilter: string) => {
+    const params = new URLSearchParams();
+    if (activeFilter !== "all") params.set("class", activeFilter);
+    if (dateFilter !== "all") params.set("date", dateFilter);
+    const query = params.toString();
+    router.push(query ? `/dashboard?${query}` : "/dashboard", { scroll: false });
   };
 
   // Handle row click (expand/collapse)
@@ -370,22 +430,49 @@ export function DashboardClient({
   const canProceedFromQuestions =
     questions.length === 3 && questions.every((q) => q.question.trim());
 
+  // Calculate expires_at based on selected duration
+  const calculateExpiresAt = (duration: ExpirationDuration): string | null => {
+    if (duration === "none") return null;
+    const now = new Date();
+    switch (duration) {
+      case "1h":
+        return new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+      case "1d":
+        return new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+      case "1w":
+        return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      case "1m":
+        return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      default:
+        return null;
+    }
+  };
+
   const handleCreateAssessment = async () => {
     if (!selectedPassage || !classLabel.trim()) return;
 
     setIsCreating(true);
     const shareToken = nanoid(16);
 
+    const insertData: Record<string, unknown> = {
+      school_id: school.id,
+      teacher_id: teacher.id,
+      passage_id: selectedPassage.id,
+      class_label: classLabel.trim(),
+      share_token: shareToken,
+      mode: "screening",
+      expires_at: calculateExpiresAt(expirationDuration),
+      use_numbered_students: useNumberedStudents,
+    };
+
+    // Only include expected_student_count if using numbered students
+    if (useNumberedStudents) {
+      insertData.expected_student_count = expectedStudentCount;
+    }
+
     const { error } = await supabase
       .from("assessments")
-      .insert({
-        school_id: school.id,
-        teacher_id: teacher.id,
-        passage_id: selectedPassage.id,
-        class_label: classLabel.trim(),
-        share_token: shareToken,
-        mode: "screening", // Default value - mode selection removed from UI
-      })
+      .insert(insertData)
       .select()
       .single();
 
@@ -420,6 +507,54 @@ export function DashboardClient({
     setQuestions([]);
     setQuestionsModified(false);
     setCopied(false);
+    setSelectedTemplate(null);
+    setTemplateName("");
+    setExpirationDuration("none");
+    setUseNumberedStudents(false);
+    setExpectedStudentCount(20);
+  };
+
+  // Handle template selection - pre-fills passage and questions
+  const handleSelectTemplate = (template: Template) => {
+    setSelectedTemplate(template);
+    // Find the full passage object from passages array
+    const passage = passages.find((p) => p.id === template.passage_id);
+    if (passage) {
+      setSelectedPassage(passage);
+      setQuestions(template.questions);
+      // Skip to label step since passage and questions are pre-filled
+      setCreateStep("label");
+    }
+  };
+
+  // Save current assessment as a template
+  const handleSaveAsTemplate = async () => {
+    if (!selectedPassage || !templateName.trim() || questions.length === 0) return;
+
+    setIsSavingTemplate(true);
+    try {
+      const response = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: templateName.trim(),
+          passage_id: selectedPassage.id,
+          questions: questions.map((q) => ({
+            question: q.question,
+            question_type: q.question_type,
+          })),
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setTemplates((prev) => [data.template, ...prev]);
+        setTemplateName("");
+      }
+    } catch (error) {
+      console.error("Error saving template:", error);
+    }
+    setIsSavingTemplate(false);
   };
 
   const shareUrl = generatedToken
@@ -543,7 +678,7 @@ export function DashboardClient({
                   Once students complete their readings, they&apos;ll appear here for review.
                 </p>
                 <button
-                  onClick={() => setCreateStep("passage")}
+                  onClick={() => setCreateStep("choose")}
                   className="bg-accent-blue text-paper px-6 py-3 rounded-lg text-base font-medium hover:bg-accent-blue/90 transition-colors"
                 >
                   Create your first assessment
@@ -599,41 +734,78 @@ export function DashboardClient({
               </h1>
             </div>
 
-            {/* Class label filter */}
-            <div className="flex items-center gap-1 text-sm mb-8 flex-wrap">
-              <button
-                onClick={() => handleFilterChange("all")}
-                className={`transition-colors duration-120 ${
-                  activeFilter === "all"
-                    ? "text-ink font-medium"
-                    : "text-stone hover:text-ink"
-                }`}
-              >
-                all
-              </button>
-              {classLabels.map((label) => (
-                <span key={label} className="flex items-center">
-                  <span className="text-mist mx-2">·</span>
-                  <button
-                    onClick={() => handleFilterChange(label)}
-                    className={`transition-colors duration-120 ${
-                      activeFilter === label.toLowerCase().replace(/\s+/g, "-")
-                        ? "text-ink font-medium"
-                        : "text-stone hover:text-ink"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                </span>
-              ))}
-              {/* Create new button - inline with filters */}
-              <span className="text-mist mx-2">·</span>
-              <button
-                onClick={() => setCreateStep("passage")}
-                className="text-accent-blue hover:text-accent-blue/80 transition-colors duration-120"
-              >
-                + new
-              </button>
+            {/* Filters row */}
+            <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+              {/* Class label filter */}
+              <div className="flex items-center gap-1 text-sm flex-wrap">
+                <button
+                  onClick={() => handleFilterChange("all")}
+                  className={`transition-colors duration-120 ${
+                    activeFilter === "all"
+                      ? "text-ink font-medium"
+                      : "text-stone hover:text-ink"
+                  }`}
+                >
+                  all
+                </button>
+                {classLabels.map((label) => (
+                  <span key={label} className="flex items-center">
+                    <span className="text-mist mx-2">·</span>
+                    <button
+                      onClick={() => handleFilterChange(label)}
+                      className={`transition-colors duration-120 ${
+                        activeFilter === label.toLowerCase().replace(/\s+/g, "-")
+                          ? "text-ink font-medium"
+                          : "text-stone hover:text-ink"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  </span>
+                ))}
+                {/* Create new button - inline with filters */}
+                <span className="text-mist mx-2">·</span>
+                <button
+                  onClick={() => setCreateStep("choose")}
+                  className="text-accent-blue hover:text-accent-blue/80 transition-colors duration-120"
+                >
+                  + new
+                </button>
+              </div>
+
+              {/* Date filter */}
+              <div className="flex items-center gap-1 text-sm">
+                <button
+                  onClick={() => handleDateFilterChange("today")}
+                  className={`px-2 py-1 rounded transition-colors duration-120 ${
+                    activeDateFilter === "today"
+                      ? "bg-mist text-ink font-medium"
+                      : "text-stone hover:text-ink"
+                  }`}
+                >
+                  today
+                </button>
+                <button
+                  onClick={() => handleDateFilterChange("week")}
+                  className={`px-2 py-1 rounded transition-colors duration-120 ${
+                    activeDateFilter === "week"
+                      ? "bg-mist text-ink font-medium"
+                      : "text-stone hover:text-ink"
+                  }`}
+                >
+                  this week
+                </button>
+                <button
+                  onClick={() => handleDateFilterChange("all")}
+                  className={`px-2 py-1 rounded transition-colors duration-120 ${
+                    activeDateFilter === "all"
+                      ? "bg-mist text-ink font-medium"
+                      : "text-stone hover:text-ink"
+                  }`}
+                >
+                  all time
+                </button>
+              </div>
             </div>
 
             {/* Two-column: readings list + quick tips (hide sidebar when expanded) */}
@@ -671,7 +843,7 @@ export function DashboardClient({
                         onClick={() => !isProcessing && handleRowClick(session.id)}
                         onMouseEnter={() => setHoveredRowId(session.id)}
                         onMouseLeave={() => setHoveredRowId(null)}
-                        className={`px-4 py-5 rounded-lg transition-all duration-150 ${
+                        className={`px-4 py-3 rounded-lg transition-all duration-150 ${
                           isExpanded
                             ? "bg-mist/70 ring-1 ring-mist"
                             : hoveredRowId === session.id
@@ -682,10 +854,10 @@ export function DashboardClient({
                         <div className="grid grid-cols-[1fr_80px_auto] gap-4 items-center">
                           {/* Left: name + meta */}
                           <div className="min-w-0">
-                            <p className="text-lg font-medium text-ink truncate">
+                            <p className="text-base font-medium text-ink truncate">
                               {student.first_name} {student.last_name}
                             </p>
-                            <p className="text-sm text-stone truncate">
+                            <p className="text-xs text-stone truncate">
                               {assessment.class_label} · {passage.title}
                             </p>
                           </div>
@@ -774,10 +946,10 @@ export function DashboardClient({
             {/* Quick tips sidebar - hidden when report is expanded */}
             {!expandedSessionId && (
               <div className="hidden lg:block">
-                <div className="sticky top-8 text-sm text-stone space-y-3">
-                  <p className="font-medium text-ink text-xs uppercase tracking-wide mb-2">Quick tips</p>
+                <div className="sticky top-8 text-sm text-stone space-y-2 border border-mist/60 rounded-lg p-4 bg-paper">
+                  <p className="font-medium text-ink text-xs uppercase tracking-wide mb-3">Quick tips</p>
                   <p>Click a row to see the full report</p>
-                  <p>Filter by class using the tabs above</p>
+                  <p>Filter by class or date above</p>
                   <p>New readings appear automatically</p>
                 </div>
               </div>
@@ -809,9 +981,70 @@ export function DashboardClient({
               className="fixed right-0 top-0 bottom-0 w-[480px] max-w-full bg-paper border-l border-mist z-50 overflow-y-auto"
             >
               <div className="px-16 py-12 max-sm:px-6">
+                {/* Step 0: Choose template or start fresh */}
+                {createStep === "choose" && (
+                  <div>
+                    <h2 className="font-serif text-xl font-semibold text-ink mb-2">
+                      New assessment
+                    </h2>
+                    <p className="text-sm text-stone mb-8">
+                      Use a saved template or start fresh.
+                    </p>
+
+                    {/* Templates list */}
+                    {templates.length > 0 && (
+                      <div className="mb-8">
+                        <p className="text-xs font-medium text-stone uppercase tracking-wide mb-4">
+                          Templates
+                        </p>
+                        <div className="space-y-3">
+                          {templates.map((template) => (
+                            <button
+                              key={template.id}
+                              onClick={() => handleSelectTemplate(template)}
+                              className="w-full text-left p-4 rounded-lg border border-mist hover:border-accent-blue hover:bg-mist/30 transition-colors group"
+                            >
+                              <p className="font-medium text-ink group-hover:text-accent-blue">
+                                {template.name}
+                              </p>
+                              <p className="text-sm text-stone mt-1">
+                                {template.passages.title} · {template.passages.word_count} words
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Start fresh option */}
+                    <div className={templates.length > 0 ? "pt-6 border-t border-mist" : ""}>
+                      {templates.length > 0 && (
+                        <p className="text-xs font-medium text-stone uppercase tracking-wide mb-4">
+                          Or start fresh
+                        </p>
+                      )}
+                      <button
+                        onClick={() => setCreateStep("passage")}
+                        className="w-full text-left p-6 rounded-lg bg-mist/40 hover:bg-mist transition-colors"
+                      >
+                        <p className="text-lg font-medium text-ink">Select a passage</p>
+                        <p className="text-sm text-stone mt-1">
+                          Choose from the passage library and set your own questions
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Step 1: Pick passage */}
                 {createStep === "passage" && (
                   <div>
+                    <button
+                      onClick={() => setCreateStep("choose")}
+                      className="text-sm text-stone hover:text-ink mb-6"
+                    >
+                      ← Back
+                    </button>
                     <h2 className="font-serif text-xl font-semibold text-ink mb-8">
                       Select a passage
                     </h2>
@@ -951,47 +1184,134 @@ export function DashboardClient({
                   </div>
                 )}
 
-                {/* Step 3: Class label */}
+                {/* Step 3: Class label + options */}
                 {createStep === "label" && (
                   <div>
                     <button
-                      onClick={() => setCreateStep("questions")}
+                      onClick={() => {
+                        if (selectedTemplate) {
+                          // If using template, go back to choose
+                          setSelectedTemplate(null);
+                          setCreateStep("choose");
+                        } else {
+                          setCreateStep("questions");
+                        }
+                      }}
                       className="text-sm text-stone hover:text-ink mb-6"
                     >
                       ← Back
                     </button>
-                    <h2 className="font-serif text-xl font-semibold text-ink mb-8">
-                      Class label
+                    <h2 className="font-serif text-xl font-semibold text-ink mb-2">
+                      Assessment details
                     </h2>
-                    <input
-                      value={classLabel}
-                      onChange={(e) => setClassLabel(e.target.value)}
-                      placeholder="e.g., Period 3 ELA"
-                      className="w-full p-4 rounded-lg border border-mist bg-paper text-ink text-sm placeholder:text-stone focus:outline-none focus:ring-2 focus:ring-accent-blue/30 focus:border-accent-blue"
-                      autoFocus
-                    />
-                    {/* Existing class labels as chips */}
-                    {classLabels.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-4">
-                        {classLabels.map((label) => (
+                    {selectedTemplate && (
+                      <p className="text-sm text-accent-blue mb-6">
+                        Using template: {selectedTemplate.name}
+                      </p>
+                    )}
+
+                    {/* Class label */}
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-ink mb-2">
+                        Class label
+                      </label>
+                      <input
+                        value={classLabel}
+                        onChange={(e) => setClassLabel(e.target.value)}
+                        placeholder="e.g., Period 3 ELA"
+                        className="w-full p-4 rounded-lg border border-mist bg-paper text-ink text-sm placeholder:text-stone focus:outline-none focus:ring-2 focus:ring-accent-blue/30 focus:border-accent-blue"
+                        autoFocus
+                      />
+                      {/* Existing class labels as chips */}
+                      {classLabels.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {classLabels.map((label) => (
+                            <button
+                              key={label}
+                              onClick={() => setClassLabel(label)}
+                              className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
+                                classLabel === label
+                                  ? "bg-accent-blue/10 text-accent-blue border border-accent-blue"
+                                  : "bg-mist text-stone hover:border-accent-blue border border-transparent"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Link expiration */}
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-ink mb-2">
+                        Link expires
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { value: "none", label: "Never" },
+                          { value: "1h", label: "1 hour" },
+                          { value: "1d", label: "1 day" },
+                          { value: "1w", label: "1 week" },
+                          { value: "1m", label: "1 month" },
+                        ].map((option) => (
                           <button
-                            key={label}
-                            onClick={() => setClassLabel(label)}
+                            key={option.value}
+                            onClick={() => setExpirationDuration(option.value as ExpirationDuration)}
                             className={`text-xs px-3 py-1.5 rounded-full transition-colors ${
-                              classLabel === label
+                              expirationDuration === option.value
                                 ? "bg-accent-blue/10 text-accent-blue border border-accent-blue"
                                 : "bg-mist text-stone hover:border-accent-blue border border-transparent"
                             }`}
                           >
-                            {label}
+                            {option.label}
                           </button>
                         ))}
                       </div>
-                    )}
+                    </div>
+
+                    {/* Numbered students toggle */}
+                    <div className="mb-6 p-4 rounded-lg bg-mist/40">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={useNumberedStudents}
+                          onChange={(e) => setUseNumberedStudents(e.target.checked)}
+                          className="mt-1 w-4 h-4 rounded border-mist text-accent-blue focus:ring-accent-blue/30"
+                        />
+                        <div>
+                          <p className="text-sm font-medium text-ink">Use numbered students</p>
+                          <p className="text-xs text-stone mt-1">
+                            Students select from a dropdown (Student 1, Student 2, etc.) instead of entering their name. Useful for privacy during pilot testing.
+                          </p>
+                        </div>
+                      </label>
+
+                      {/* Student count selector */}
+                      {useNumberedStudents && (
+                        <div className="mt-4 ml-7">
+                          <label className="block text-xs text-stone mb-2">
+                            Expected number of students
+                          </label>
+                          <select
+                            value={expectedStudentCount}
+                            onChange={(e) => setExpectedStudentCount(parseInt(e.target.value))}
+                            className="text-sm px-3 py-2 rounded-lg border border-mist bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-accent-blue/30"
+                          >
+                            {[10, 15, 20, 25, 30, 35, 40].map((count) => (
+                              <option key={count} value={count}>
+                                {count} students
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
                     <button
                       onClick={handleCreateAssessment}
                       disabled={!classLabel.trim() || isCreating}
-                      className="w-full bg-accent-blue text-paper py-4 rounded-lg font-medium hover:bg-accent-blue/90 disabled:opacity-50 transition-colors mt-8"
+                      className="w-full bg-accent-blue text-paper py-4 rounded-lg font-medium hover:bg-accent-blue/90 disabled:opacity-50 transition-colors"
                     >
                       {isCreating ? "Creating..." : "Generate link"}
                     </button>
@@ -1005,7 +1325,9 @@ export function DashboardClient({
                       Assessment created
                     </h2>
                     <p className="text-sm text-stone mb-8">
-                      Send this to your students. They don&apos;t need to log in — they&apos;ll just type their name.
+                      {useNumberedStudents
+                        ? `Send this to your students. They'll select their number (Student 1-${expectedStudentCount}) from a dropdown.`
+                        : "Send this to your students. They don't need to log in — they'll just type their name."}
                     </p>
                     <div className="bg-mist rounded-lg p-4 mb-6">
                       <p className="font-mono text-base text-ink break-all">
@@ -1031,6 +1353,31 @@ export function DashboardClient({
                         "Copy link"
                       )}
                     </button>
+
+                    {/* Save as template option - only show if not already using a template */}
+                    {!selectedTemplate && (
+                      <div className="mt-8 pt-6 border-t border-mist">
+                        <p className="text-sm font-medium text-ink mb-3">
+                          Save as template for later
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                            value={templateName}
+                            onChange={(e) => setTemplateName(e.target.value)}
+                            placeholder="Template name..."
+                            className="flex-1 px-3 py-2 rounded-lg border border-mist bg-paper text-ink text-sm placeholder:text-stone focus:outline-none focus:ring-2 focus:ring-accent-blue/30"
+                          />
+                          <button
+                            onClick={handleSaveAsTemplate}
+                            disabled={!templateName.trim() || isSavingTemplate}
+                            className="px-4 py-2 rounded-lg bg-mist text-ink text-sm font-medium hover:bg-stone/20 disabled:opacity-50 transition-colors"
+                          >
+                            {isSavingTemplate ? "Saving..." : "Save"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <button
                       onClick={closePanel}
                       className="w-full text-center text-sm text-stone hover:text-ink mt-6 transition-colors"
@@ -1170,7 +1517,7 @@ export function DashboardClient({
 
       {/* Command Palette (Cmd+K) */}
       <CommandPalette
-        onCreateAssessment={() => setCreateStep("passage")}
+        onCreateAssessment={() => setCreateStep("choose")}
         sessions={sessions.map(s => ({
           id: s.id,
           students: s.students,

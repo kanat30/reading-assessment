@@ -23,6 +23,8 @@ interface Assessment {
   class_label: string;
   share_token: string;
   passages: Passage;
+  use_numbered_students: boolean;
+  expected_student_count: number | null;
 }
 
 interface TokenPageProps {
@@ -31,8 +33,12 @@ interface TokenPageProps {
 
 const STUDENT_NAME_KEY = "fs:student-name";
 
-function isValidName(name: string): boolean {
+function isValidName(name: string, isNumbered: boolean = false): boolean {
   const trimmed = name.trim();
+  if (isNumbered) {
+    // For numbered students, we expect "Student N" format
+    return /^Student \d+$/.test(trimmed);
+  }
   return trimmed.length >= 2 && trimmed.includes(" ");
 }
 
@@ -89,8 +95,13 @@ export default function TokenPage({ params }: TokenPageProps) {
     e.preventDefault();
 
     const trimmed = studentName.trim();
-    if (!isValidName(trimmed)) {
-      setNameError("Please enter your first and last name");
+    const isNumbered = assessment?.use_numbered_students || false;
+
+    if (!isValidName(trimmed, isNumbered)) {
+      setNameError(isNumbered
+        ? "Please select your student number"
+        : "Please enter your first and last name"
+      );
       return;
     }
 
@@ -159,21 +170,50 @@ export default function TokenPage({ params }: TokenPageProps) {
                     htmlFor="studentName"
                     className="block text-sm font-medium text-ink mb-2"
                   >
-                    What&apos;s your name?
+                    {assessment?.use_numbered_students
+                      ? "I am..."
+                      : "What's your name?"}
                   </label>
-                  <Input
-                    id="studentName"
-                    type="text"
-                    value={studentName}
-                    onChange={(e) => {
-                      setStudentName(e.target.value);
-                      if (nameError) setNameError("");
-                    }}
-                    placeholder="First Last"
-                    className="w-full text-lg py-3 h-auto"
-                    autoComplete="name"
-                    autoFocus
-                  />
+
+                  {assessment?.use_numbered_students ? (
+                    // Dropdown for numbered students
+                    <select
+                      id="studentName"
+                      value={studentName}
+                      onChange={(e) => {
+                        setStudentName(e.target.value);
+                        if (nameError) setNameError("");
+                      }}
+                      className="w-full text-lg py-3 px-4 h-auto rounded-lg border border-mist bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-accent-blue/30 focus:border-accent-blue"
+                      autoFocus
+                    >
+                      <option value="">Select your number...</option>
+                      {Array.from(
+                        { length: assessment.expected_student_count || 20 },
+                        (_, i) => i + 1
+                      ).map((num) => (
+                        <option key={num} value={`Student ${num}`}>
+                          Student {num}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    // Text input for regular name entry
+                    <Input
+                      id="studentName"
+                      type="text"
+                      value={studentName}
+                      onChange={(e) => {
+                        setStudentName(e.target.value);
+                        if (nameError) setNameError("");
+                      }}
+                      placeholder="First Last"
+                      className="w-full text-lg py-3 h-auto"
+                      autoComplete="name"
+                      autoFocus
+                    />
+                  )}
+
                   {nameError && (
                     <p className="mt-2 text-sm text-alert">{nameError}</p>
                   )}
