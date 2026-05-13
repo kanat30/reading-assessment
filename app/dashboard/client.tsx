@@ -454,32 +454,29 @@ export function DashboardClient({
     setIsCreating(true);
     const shareToken = nanoid(16);
 
-    const insertData: Record<string, unknown> = {
-      school_id: school.id,
-      teacher_id: teacher.id,
-      passage_id: selectedPassage.id,
-      class_label: classLabel.trim(),
-      share_token: shareToken,
-      mode: "screening",
-      expires_at: calculateExpiresAt(expirationDuration),
-      use_numbered_students: useNumberedStudents,
-    };
-
-    // Only include expected_student_count if using numbered students
-    if (useNumberedStudents) {
-      insertData.expected_student_count = expectedStudentCount;
-    }
+    // Build insert object - only include optional fields if they have values
+    const expiresAt = calculateExpiresAt(expirationDuration);
 
     const { error } = await supabase
       .from("assessments")
-      .insert(insertData)
+      .insert({
+        school_id: school.id,
+        teacher_id: teacher.id,
+        passage_id: selectedPassage.id,
+        class_label: classLabel.trim(),
+        share_token: shareToken,
+        mode: "screening",
+        ...(expiresAt && { expires_at: expiresAt }),
+        use_numbered_students: useNumberedStudents,
+        ...(useNumberedStudents && { expected_student_count: expectedStudentCount }),
+      })
       .select()
       .single();
 
     setIsCreating(false);
 
     if (error) {
-      console.error("Error creating assessment:", error);
+      console.error("Error creating assessment:", error.message, error.details, error.hint);
       return;
     }
 
