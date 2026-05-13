@@ -163,6 +163,11 @@ export function DashboardClient({
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [templateName, setTemplateName] = useState("");
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [showTemplatesPanel, setShowTemplatesPanel] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
+  const [editTemplateName, setEditTemplateName] = useState("");
+  const [isUpdatingTemplate, setIsUpdatingTemplate] = useState(false);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
 
   // Link expiration state
   const [expirationDuration, setExpirationDuration] = useState<ExpirationDuration>("none");
@@ -554,6 +559,53 @@ export function DashboardClient({
     setIsSavingTemplate(false);
   };
 
+  // Update template name
+  const handleUpdateTemplate = async () => {
+    if (!editingTemplate || !editTemplateName.trim()) return;
+
+    setIsUpdatingTemplate(true);
+    try {
+      const response = await fetch("/api/templates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingTemplate.id,
+          name: editTemplateName.trim(),
+        }),
+      });
+
+      if (response.ok) {
+        setTemplates((prev) =>
+          prev.map((t) =>
+            t.id === editingTemplate.id ? { ...t, name: editTemplateName.trim() } : t
+          )
+        );
+        setEditingTemplate(null);
+        setEditTemplateName("");
+      }
+    } catch (error) {
+      console.error("Error updating template:", error);
+    }
+    setIsUpdatingTemplate(false);
+  };
+
+  // Delete template
+  const handleDeleteTemplate = async (templateId: string) => {
+    setDeletingTemplateId(templateId);
+    try {
+      const response = await fetch(`/api/templates?id=${templateId}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        setTemplates((prev) => prev.filter((t) => t.id !== templateId));
+      }
+    } catch (error) {
+      console.error("Error deleting template:", error);
+    }
+    setDeletingTemplateId(null);
+  };
+
   const shareUrl = generatedToken
     ? `${typeof window !== "undefined" ? window.location.origin : ""}/read/${generatedToken}`
     : "";
@@ -768,6 +820,18 @@ export function DashboardClient({
                 >
                   + new
                 </button>
+                {/* Templates management button */}
+                {templates.length > 0 && (
+                  <>
+                    <span className="text-mist mx-2">·</span>
+                    <button
+                      onClick={() => setShowTemplatesPanel(true)}
+                      className="text-stone hover:text-ink transition-colors duration-120"
+                    >
+                      templates
+                    </button>
+                  </>
+                )}
               </div>
 
               {/* Date filter */}
@@ -1595,6 +1659,149 @@ export function DashboardClient({
                     {isDeleting ? "Deleting..." : "Delete permanently"}
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Templates management panel */}
+      <AnimatePresence>
+        {showTemplatesPanel && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.4 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowTemplatesPanel(false);
+                setEditingTemplate(null);
+                setEditTemplateName("");
+              }}
+              className="fixed inset-0 bg-ink z-40"
+            />
+
+            {/* Panel */}
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ duration: 0.28, ease: "easeOut" }}
+              className="fixed right-0 top-0 bottom-0 w-[480px] max-w-full bg-paper border-l border-mist z-50 overflow-y-auto"
+            >
+              <div className="px-16 py-12 max-sm:px-6">
+                <div className="flex items-center justify-between mb-8">
+                  <h2 className="font-serif text-xl font-semibold text-ink">
+                    Templates
+                  </h2>
+                  <button
+                    onClick={() => {
+                      setShowTemplatesPanel(false);
+                      setEditingTemplate(null);
+                      setEditTemplateName("");
+                    }}
+                    className="p-2 rounded-lg text-stone hover:text-ink hover:bg-mist/50 transition-colors"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                {templates.length === 0 ? (
+                  <div className="text-center py-12">
+                    <p className="text-stone">No templates yet.</p>
+                    <p className="text-sm text-stone mt-2">
+                      Create an assessment and save it as a template.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {templates.map((template) => (
+                      <div
+                        key={template.id}
+                        className="p-4 rounded-lg border border-mist hover:border-stone/30 transition-colors"
+                      >
+                        {editingTemplate?.id === template.id ? (
+                          // Edit mode
+                          <div className="space-y-3">
+                            <input
+                              type="text"
+                              value={editTemplateName}
+                              onChange={(e) => setEditTemplateName(e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-mist bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-accent-blue/30"
+                              autoFocus
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={handleUpdateTemplate}
+                                disabled={!editTemplateName.trim() || isUpdatingTemplate}
+                                className="px-3 py-1.5 rounded-lg bg-accent-blue text-paper text-sm font-medium hover:bg-accent-blue/90 disabled:opacity-50 transition-colors"
+                              >
+                                {isUpdatingTemplate ? "Saving..." : "Save"}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingTemplate(null);
+                                  setEditTemplateName("");
+                                }}
+                                className="px-3 py-1.5 rounded-lg text-stone hover:text-ink text-sm transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          // View mode
+                          <>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-medium text-ink truncate">
+                                  {template.name}
+                                </p>
+                                <p className="text-sm text-stone mt-1">
+                                  {template.passages.title} · {template.passages.word_count} words
+                                </p>
+                                <p className="text-xs text-stone mt-1">
+                                  {template.questions.length} questions
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <button
+                                  onClick={() => {
+                                    setEditingTemplate(template);
+                                    setEditTemplateName(template.name);
+                                  }}
+                                  className="p-2 rounded-lg text-stone hover:text-ink hover:bg-mist/50 transition-colors"
+                                  title="Edit template name"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                  </svg>
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteTemplate(template.id)}
+                                  disabled={deletingTemplateId === template.id}
+                                  className="p-2 rounded-lg text-stone hover:text-alert hover:bg-alert/10 transition-colors disabled:opacity-50"
+                                  title="Delete template"
+                                >
+                                  {deletingTemplateId === template.id ? (
+                                    <div className="w-4 h-4 border-2 border-stone/30 border-t-stone rounded-full animate-spin" />
+                                  ) : (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </motion.div>
           </>

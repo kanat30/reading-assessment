@@ -21,6 +21,7 @@ ALTER TABLE assessment_templates ENABLE ROW LEVEL SECURITY;
 -- Drop existing policies if they exist, then recreate
 DROP POLICY IF EXISTS "teachers can read school templates" ON assessment_templates;
 DROP POLICY IF EXISTS "teachers can insert templates" ON assessment_templates;
+DROP POLICY IF EXISTS "teachers can update own templates" ON assessment_templates;
 DROP POLICY IF EXISTS "teachers can delete own templates" ON assessment_templates;
 
 -- Teachers can read all templates in their school
@@ -32,6 +33,11 @@ CREATE POLICY "teachers can read school templates"
 CREATE POLICY "teachers can insert templates"
   ON assessment_templates FOR INSERT
   WITH CHECK (school_id IN (SELECT school_id FROM teachers WHERE auth_provider_id = auth.uid()));
+
+-- Teachers can only update their own templates
+CREATE POLICY "teachers can update own templates"
+  ON assessment_templates FOR UPDATE
+  USING (teacher_id IN (SELECT id FROM teachers WHERE auth_provider_id = auth.uid()));
 
 -- Teachers can only delete their own templates
 CREATE POLICY "teachers can delete own templates"

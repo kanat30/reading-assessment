@@ -139,6 +139,71 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// PATCH - Update a template (name only)
+export async function PATCH(request: NextRequest) {
+  const supabase = await createClient();
+
+  try {
+    const body = await request.json();
+    const { id, name } = body as { id: string; name: string };
+
+    if (!id) {
+      return NextResponse.json(
+        { error: "Template ID is required" },
+        { status: 400 }
+      );
+    }
+
+    if (!name?.trim()) {
+      return NextResponse.json(
+        { error: "Template name is required" },
+        { status: 400 }
+      );
+    }
+
+    // Get current user's teacher record
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { data: teacher } = await supabase
+      .from("teachers")
+      .select("id")
+      .eq("auth_provider_id", user.id)
+      .single();
+
+    if (!teacher) {
+      return NextResponse.json({ error: "Teacher not found" }, { status: 404 });
+    }
+
+    // Update the template (only own templates can be updated)
+    const { data: template, error } = await supabase
+      .from("assessment_templates")
+      .update({ name: name.trim() })
+      .eq("id", id)
+      .eq("teacher_id", teacher.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error updating template:", error);
+      return NextResponse.json(
+        { error: "Failed to update template" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ template });
+  } catch (error) {
+    console.error("Templates API error:", error);
+    return NextResponse.json(
+      { error: "Failed to process request" },
+      { status: 500 }
+    );
+  }
+}
+
 // DELETE - Delete a template
 export async function DELETE(request: NextRequest) {
   const supabase = await createClient();
