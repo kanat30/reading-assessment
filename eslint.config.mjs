@@ -12,7 +12,20 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Ignore scripts folder (dev-only tools)
+    "scripts/**",
+    // Ignore public folder (generated files)
+    "public/**",
   ]),
+  {
+    rules: {
+      // Allow setState in useEffect for legitimate patterns like:
+      // - Loading initial state from sessionStorage/localStorage
+      // - Syncing state when props change
+      // - Fetching data on mount
+      "react-hooks/set-state-in-effect": "warn",
+    },
+  },
 ]);
 
 export default eslintConfig;
