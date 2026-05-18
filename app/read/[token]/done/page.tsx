@@ -40,27 +40,33 @@ function DoneContent({ token }: { token: string }) {
       className="min-h-screen bg-paper flex flex-col items-center justify-center px-6"
     >
       {/* Animated checkmark */}
-      <AnimatedCheckmark size={80} delay={0.1} className="mb-8" />
+      <AnimatedCheckmark size={100} delay={0.1} className="mb-6" />
 
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.4 }}
-        className="text-center"
+        className="text-center max-w-sm"
       >
-        <h1 className="font-serif text-[40px] font-semibold text-ink mb-3">
-          Nice work!
+        <h1 className="font-serif text-[48px] font-semibold text-ink mb-4">
+          All done!
         </h1>
-        <p className="text-base text-stone">Your reading has been recorded.</p>
-        <p className="text-sm text-stone mt-1 italic">
-          You can close this window now.
+
+        <div className="bg-success/10 rounded-2xl px-6 py-5 mb-6">
+          <p className="text-lg text-ink font-medium">
+            Great job completing your assessment!
+          </p>
+        </div>
+
+        <p className="text-stone">
+          You can close this tab now.
         </p>
 
         {/* Report link for testing - teachers access reports via dashboard */}
         {sessionId && (
           <Link
             href={`/report/${sessionId}`}
-            className="mt-10 inline-block text-sm text-accent-blue hover:underline transition-opacity"
+            className="mt-8 inline-block text-sm text-accent-blue hover:underline transition-opacity cursor-pointer"
           >
             View report
           </Link>
@@ -77,9 +83,9 @@ export default function DonePage({ params }: DonePageProps) {
     <Suspense
       fallback={
         <div className="min-h-screen bg-paper flex flex-col items-center justify-center px-6">
-          <div className="w-20 h-20 rounded-full bg-success/10 flex items-center justify-center mb-8">
+          <div className="w-24 h-24 rounded-full bg-success/10 flex items-center justify-center mb-6">
             <svg
-              className="w-10 h-10 text-success"
+              className="w-12 h-12 text-success"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -92,10 +98,10 @@ export default function DonePage({ params }: DonePageProps) {
               />
             </svg>
           </div>
-          <h1 className="font-serif text-[40px] font-semibold text-ink mb-3">
-            Nice work!
+          <h1 className="font-serif text-[48px] font-semibold text-ink mb-4">
+            All done!
           </h1>
-          <p className="text-base text-stone">Your reading has been recorded.</p>
+          <p className="text-lg text-ink font-medium">Great job completing your assessment!</p>
         </div>
       }
     >

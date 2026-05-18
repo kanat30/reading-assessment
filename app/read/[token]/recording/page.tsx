@@ -504,7 +504,7 @@ function RecordingContent({ token }: { token: string }) {
       </AnimatePresence>
 
       {/* Flow progress indicator */}
-      <div className="pt-6 px-6">
+      <div className="pt-10 px-6">
         <div className="max-w-[680px] mx-auto flex items-center justify-center gap-3 text-sm">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-success" />

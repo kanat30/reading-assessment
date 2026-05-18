@@ -183,7 +183,7 @@ function ComprehensionContent({ token }: { token: string }) {
       className="min-h-screen bg-paper flex flex-col"
     >
       {/* Flow progress indicator */}
-      <div className="pt-6 px-6">
+      <div className="pt-10 px-6">
         <div className="max-w-[600px] mx-auto flex items-center justify-center gap-3 text-sm">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-success" />
@@ -203,7 +203,7 @@ function ComprehensionContent({ token }: { token: string }) {
       </div>
 
       {/* Header */}
-      <div className="pt-6 px-6">
+      <div className="pt-16 px-6">
         <div className="max-w-[600px] mx-auto">
           <h1 className="font-serif text-xl font-semibold text-ink mb-1">
             Answer questions about what you read
@@ -215,7 +215,7 @@ function ComprehensionContent({ token }: { token: string }) {
       </div>
 
       {/* Progress indicator */}
-      <div className="px-6 pt-6">
+      <div className="px-6 pt-3">
         <div className="max-w-[600px] mx-auto">
           <div className="flex gap-2">
             {questions.map((_, idx) => (
@@ -238,7 +238,7 @@ function ComprehensionContent({ token }: { token: string }) {
       </div>
 
       {/* Question card */}
-      <div className="flex-1 flex items-center justify-center px-6 py-8">
+      <div className="flex-1 flex items-start justify-center px-6 pt-12 pb-8">
         <div className="max-w-[600px] w-full">
           <motion.div
             key={currentQuestion}
