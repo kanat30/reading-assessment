@@ -9,6 +9,9 @@ import { createClient } from "@/lib/supabase/browser";
 import { MiniWaveform } from "@/components/MiniWaveform";
 import { ReportSkeleton } from "@/components/skeletons/ReportSkeleton";
 import { formatContextualTime } from "@/lib/format/time";
+import { QuickActionsMenu, StatusDot, ReviewStatus } from "@/components/QuickActionsMenu";
+import { NotePanel } from "@/components/NotePanel";
+import { ReviewPromptModal } from "@/components/ReviewPromptModal";
 
 // Dynamic import for SessionReport with skeleton loading
 const SessionReport = dynamic(() => import("@/components/SessionReport").then(m => ({ default: m.SessionReport })), {
@@ -65,6 +68,8 @@ interface Session {
   created_at: string;
   duration_seconds: number;
   scores_json: SessionScoresJson | null;
+  teacher_review_status: ReviewStatus;
+  has_note: boolean;
   students: Student;
   assessments: SessionAssessment;
 }
@@ -201,6 +206,17 @@ export function DashboardClient({
   const [useNumberedStudents, setUseNumberedStudents] = useState(false);
   const [expectedStudentCount, setExpectedStudentCount] = useState(20);
 
+  // Review status workflow state
+  const [statusFilter, setStatusFilter] = useState<ReviewStatus | "all">("all");
+  const [hasNotesFilter, setHasNotesFilter] = useState(false);
+  const [viewedSessionIds] = useState<Set<string>>(() => new Set());
+  const [showReviewPrompt, setShowReviewPrompt] = useState(false);
+  const [reviewPromptSession, setReviewPromptSession] = useState<Session | null>(null);
+
+  // Note panel state
+  const [noteSession, setNoteSession] = useState<Session | null>(null);
+  const [noteText, setNoteText] = useState("");
+
   const supabase = createClient();
 
   // Filter sessions by class label and date
@@ -231,7 +247,17 @@ export function DashboardClient({
             s.assessments.class_label?.toLowerCase().replace(/\s+/g, "-") ===
             activeFilter
         )
-  );
+  ).filter((s) => {
+    // Apply status filter
+    if (statusFilter !== "all" && s.teacher_review_status !== statusFilter) {
+      return false;
+    }
+    // Apply has notes filter
+    if (hasNotesFilter && !s.has_note) {
+      return false;
+    }
+    return true;
+  });
 
   // Handle class filter change (preserves date filter)
   const handleFilterChange = (label: string) => {
@@ -264,7 +290,110 @@ export function DashboardClient({
 
   // Handle row click (expand/collapse)
   const handleRowClick = (sessionId: string) => {
-    setExpandedSessionId((prev) => (prev === sessionId ? null : sessionId));
+    const session = sessions.find(s => s.id === sessionId);
+
+    // If we're collapsing an expanded session
+    if (expandedSessionId === sessionId) {
+      // Check if this was a 'new' session that we viewed for the first time
+      if (session && session.teacher_review_status === "new" && viewedSessionIds.has(sessionId)) {
+        // Show the review prompt
+        setReviewPromptSession(session);
+        setShowReviewPrompt(true);
+      }
+      setExpandedSessionId(null);
+    } else {
+      // Expanding a new session - track that we've viewed it
+      if (session && session.teacher_review_status === "new") {
+        viewedSessionIds.add(sessionId);
+      }
+      setExpandedSessionId(sessionId);
+    }
+  };
+
+  // Update session status
+  const updateSessionStatus = async (sessionId: string, status: ReviewStatus) => {
+    try {
+      const response = await fetch("/api/session-status", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, status }),
+      });
+
+      if (response.ok) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId ? { ...s, teacher_review_status: status } : s
+          )
+        );
+      }
+    } catch (error) {
+      console.error("Error updating status:", error);
+    }
+  };
+
+  // Handle review prompt actions
+  const handleMarkReviewed = async () => {
+    if (reviewPromptSession) {
+      await updateSessionStatus(reviewPromptSession.id, "reviewed");
+    }
+    setShowReviewPrompt(false);
+    setReviewPromptSession(null);
+  };
+
+  const handleSkipReview = () => {
+    setShowReviewPrompt(false);
+    setReviewPromptSession(null);
+  };
+
+  // Note handlers
+  const handleOpenNote = async (session: Session) => {
+    setNoteSession(session);
+    // Fetch the current note
+    try {
+      const response = await fetch(`/api/session-notes?session_id=${session.id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setNoteText(data.note?.note_text || "");
+      }
+    } catch (error) {
+      console.error("Error fetching note:", error);
+      setNoteText("");
+    }
+  };
+
+  const handleSaveNote = async (text: string) => {
+    if (!noteSession) return;
+
+    await fetch("/api/session-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: noteSession.id,
+        note_text: text,
+      }),
+    });
+
+    // Update local state to show note icon
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === noteSession.id ? { ...s, has_note: true } : s
+      )
+    );
+  };
+
+  const handleDeleteNote = async () => {
+    if (!noteSession) return;
+
+    await fetch(`/api/session-notes?session_id=${noteSession.id}`, {
+      method: "DELETE",
+    });
+
+    // Update local state to remove note icon
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === noteSession.id ? { ...s, has_note: false } : s
+      )
+    );
   };
 
   // Handle escape key to collapse expanded row and close dropdowns
@@ -984,6 +1113,53 @@ export function DashboardClient({
                         all time
                       </button>
                     </div>
+
+                    {/* Status filter pills */}
+                    <div className="flex items-center gap-1 text-sm border-l border-mist pl-4 ml-2">
+                      <button
+                        onClick={() => setStatusFilter("all")}
+                        className={`px-2.5 py-1 rounded transition-colors duration-120 ${
+                          statusFilter === "all"
+                            ? "bg-mist text-ink font-medium"
+                            : "text-stone hover:text-ink"
+                        }`}
+                      >
+                        all
+                      </button>
+                      <button
+                        onClick={() => setStatusFilter("new")}
+                        className={`px-2.5 py-1 rounded transition-colors duration-120 flex items-center gap-1.5 ${
+                          statusFilter === "new"
+                            ? "bg-mist text-ink font-medium"
+                            : "text-stone hover:text-ink"
+                        }`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-accent-blue" />
+                        new
+                      </button>
+                      <button
+                        onClick={() => setStatusFilter("flagged")}
+                        className={`px-2.5 py-1 rounded transition-colors duration-120 flex items-center gap-1.5 ${
+                          statusFilter === "flagged"
+                            ? "bg-mist text-ink font-medium"
+                            : "text-stone hover:text-ink"
+                        }`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-alert" />
+                        flagged
+                      </button>
+                    </div>
+
+                    {/* Has notes checkbox */}
+                    <label className="flex items-center gap-2 text-sm text-stone cursor-pointer hover:text-ink transition-colors ml-2">
+                      <input
+                        type="checkbox"
+                        checked={hasNotesFilter}
+                        onChange={(e) => setHasNotesFilter(e.target.checked)}
+                        className="w-3.5 h-3.5 rounded border-mist text-accent-blue focus:ring-accent-blue/30"
+                      />
+                      has notes
+                    </label>
                   </div>
 
                   {/* Right side: Links, Templates, New Assessment */}
@@ -1056,15 +1232,33 @@ export function DashboardClient({
                             : "hover:bg-mist/20 cursor-pointer"
                         } ${isProcessing ? "cursor-default opacity-70" : ""}`}
                       >
-                        <div className="grid grid-cols-[1fr_80px_auto] gap-4 items-center">
-                          {/* Left: name + meta */}
-                          <div className="min-w-0">
-                            <p className="text-base font-medium text-ink truncate">
-                              {student.first_name} {student.last_name}
-                            </p>
-                            <p className="text-xs text-stone truncate">
-                              {assessment.class_label} · {passage.title}
-                            </p>
+                        <div className="grid grid-cols-[auto_1fr_80px_auto] gap-4 items-center">
+                          {/* Status dot */}
+                          <div className="flex items-center justify-center w-4">
+                            <StatusDot status={session.teacher_review_status} />
+                          </div>
+
+                          {/* Left: name + meta + note icon */}
+                          <div className="min-w-0 flex items-center gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-base font-medium text-ink truncate">
+                                {student.first_name} {student.last_name}
+                              </p>
+                              <p className="text-xs text-stone truncate">
+                                {assessment.class_label} · {passage.title}
+                              </p>
+                            </div>
+                            {/* Note icon */}
+                            {session.has_note && (
+                              <span
+                                className="text-stone/60 flex-shrink-0"
+                                title="Has notes"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </span>
+                            )}
                           </div>
 
                           {/* Middle: waveform */}
@@ -1081,8 +1275,8 @@ export function DashboardClient({
                             )}
                           </div>
 
-                          {/* Right: time + delete */}
-                          <div className="flex items-center gap-3">
+                          {/* Right: time + quick actions */}
+                          <div className="flex items-center gap-2">
                             <span className="text-sm text-stone whitespace-nowrap">
                               {isProcessing ? (
                                 <span className="text-xs">Scoring...</span>
@@ -1090,17 +1284,16 @@ export function DashboardClient({
                                 formatContextualTime(session.scored_at || session.created_at)
                               )}
                             </span>
-                            {/* Delete button - visible on hover */}
+                            {/* Quick actions menu - visible on hover */}
                             {hoveredRowId === session.id && !isProcessing && (
-                              <button
-                                onClick={(e) => openDeleteConfirm(session, e)}
-                                className="p-1.5 rounded text-stone/50 hover:text-alert hover:bg-alert/10 transition-colors"
-                                title="Delete reading"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
+                              <QuickActionsMenu
+                                sessionId={session.id}
+                                currentStatus={session.teacher_review_status}
+                                hasNote={session.has_note}
+                                onStatusChange={(status) => updateSessionStatus(session.id, status)}
+                                onAddNote={() => handleOpenNote(session)}
+                                onDelete={() => openDeleteConfirm(session, { stopPropagation: () => {} } as React.MouseEvent)}
+                              />
                             )}
                           </div>
                         </div>
@@ -2070,6 +2263,25 @@ export function DashboardClient({
           </>
         )}
       </AnimatePresence>
+
+      {/* Note panel */}
+      <NotePanel
+        sessionId={noteSession?.id || ""}
+        studentName={noteSession ? `${noteSession.students.first_name} ${noteSession.students.last_name}` : ""}
+        isOpen={noteSession !== null}
+        onClose={() => setNoteSession(null)}
+        onSave={handleSaveNote}
+        onDelete={handleDeleteNote}
+        initialNote={noteText}
+      />
+
+      {/* Review prompt modal */}
+      <ReviewPromptModal
+        isOpen={showReviewPrompt}
+        studentName={reviewPromptSession ? `${reviewPromptSession.students.first_name} ${reviewPromptSession.students.last_name}` : ""}
+        onMarkReviewed={handleMarkReviewed}
+        onSkip={handleSkipReview}
+      />
     </div>
   );
 }

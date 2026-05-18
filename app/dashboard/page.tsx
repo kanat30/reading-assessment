@@ -34,6 +34,7 @@ export default async function DashboardPage() {
       created_at,
       duration_seconds,
       scores_json,
+      teacher_review_status,
       students(id, first_name, last_name),
       assessments!inner(
         id,
@@ -45,6 +46,14 @@ export default async function DashboardPage() {
     .eq("assessments.school_id", teacher.school_id)
     .in("status", ["complete", "processing"])
     .order("scored_at", { ascending: false, nullsFirst: false });
+
+  // Get session IDs that have notes from the current teacher
+  const { data: teacherNotes } = await supabase
+    .from("session_teacher_notes")
+    .select("session_id")
+    .eq("teacher_id", teacher.id);
+
+  const sessionIdsWithNotes = new Set((teacherNotes || []).map(n => n.session_id));
 
   // Get distinct class labels from assessments
   const { data: assessments } = await supabase
@@ -92,8 +101,16 @@ export default async function DashboardPage() {
     .order("created_at", { ascending: false });
 
   // Transform sessions to match expected types (Supabase returns nested objects)
+  // Map 'unreviewed' to 'new' for backwards compatibility before migration runs
+  const mapReviewStatus = (status: string | null): "new" | "reviewed" | "approved" | "flagged" | "edited" => {
+    if (!status || status === "unreviewed") return "new";
+    return status as "new" | "reviewed" | "approved" | "flagged" | "edited";
+  };
+
   const transformedSessions = (sessions || []).map((s) => ({
     ...s,
+    teacher_review_status: mapReviewStatus(s.teacher_review_status),
+    has_note: sessionIdsWithNotes.has(s.id),
     students: s.students as unknown as { id: string; first_name: string; last_name: string },
     assessments: s.assessments as unknown as {
       id: string;

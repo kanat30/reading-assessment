@@ -76,6 +76,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       .delete()
       .eq("session_id", sessionId);
 
+    // Delete teacher notes (cascade will also handle this, but explicit for clarity)
+    await adminClient
+      .from("session_teacher_notes")
+      .delete()
+      .eq("session_id", sessionId);
+
     // Delete the session itself
     const { error: deleteError } = await adminClient
       .from("sessions")
