@@ -13,7 +13,7 @@ interface PrintReportProps {
         wcpm: number;
         accuracy_percent: number;
         percentile_estimate: number;
-        percentile_band: "success" | "warning" | "alert";
+        percentile_band: "above" | "approaching" | "below";
         correct_words: number;
         total_words_attempted: number;
       };
@@ -178,7 +178,7 @@ export function PrintReport({ session, events }: PrintReportProps) {
         {prosody && (
           <div className="mb-8 print-avoid-break">
             <h2 className="text-xs uppercase tracking-wide text-gray-500 mb-3 print:text-[9pt]">
-              Fluency Dimensions
+              Fluency Dimensions <span className="normal-case italic">(AI-generated)</span>
             </h2>
             <div className="grid grid-cols-4 gap-4">
               {[
@@ -208,7 +208,7 @@ export function PrintReport({ session, events }: PrintReportProps) {
         {/* AI Summary */}
         <div className="mb-8 print-avoid-break">
           <h2 className="text-xs uppercase tracking-wide text-gray-500 mb-2 print:text-[9pt]">
-            Summary
+            AI Observation <span className="normal-case italic">(AI-generated)</span>
           </h2>
           <p className="font-serif text-base italic text-black leading-relaxed print:text-[11pt] print:leading-relaxed">
             {summary}
@@ -249,7 +249,7 @@ export function PrintReport({ session, events }: PrintReportProps) {
         {error_patterns && error_patterns.length > 0 && (
           <div className="mb-8 print-avoid-break">
             <h2 className="text-xs uppercase tracking-wide text-gray-500 mb-2 print:text-[9pt]">
-              Error Patterns
+              Suggested Patterns <span className="normal-case italic">(AI-generated)</span>
             </h2>
             <ul className="list-disc list-inside text-sm text-black print:text-[10pt]">
               {error_patterns.slice(0, 3).map((pattern) => (

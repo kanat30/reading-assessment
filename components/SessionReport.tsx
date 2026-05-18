@@ -5,7 +5,11 @@ import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/browser";
 import { ReportClient } from "./ReportClient";
 import { OverridePanel } from "./OverridePanel";
+import { AIBadge } from "./AIBadge";
+import { DetailedDataPanel } from "./DetailedDataPanel";
 import { ReportSkeleton } from "./skeletons/ReportSkeleton";
+import { AudioQualityIndicator } from "./AudioQualityIndicator";
+import { TeacherNotesSection } from "./TeacherNotesSection";
 import { useCountUp } from "@/hooks/useCountUp";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useIntersectionObserver } from "@/hooks/useIntersectionObserver";
@@ -47,7 +51,7 @@ interface ScoresJson {
     wcpm: number;
     accuracy_percent: number;
     percentile_estimate: number;
-    percentile_band: "success" | "warning" | "alert";
+    percentile_band: "above" | "approaching" | "below";
     correct_words: number;
     total_words_attempted: number;
   };
@@ -406,14 +410,14 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             style={{ left: "50%" }}
           />
 
-          {/* Animated fill */}
+          {/* Animated fill - neutral shades to show position without implying judgment */}
           <motion.div
             className={`h-full rounded-full ${
-              metrics.percentile_band === "success"
-                ? "bg-success"
-                : metrics.percentile_band === "warning"
-                ? "bg-warning"
-                : "bg-alert"
+              metrics.percentile_band === "above"
+                ? "bg-ink"
+                : metrics.percentile_band === "approaching"
+                ? "bg-stone"
+                : "bg-stone/60"
             }`}
             initial={{ width: reducedMotion ? `${metrics.percentile_estimate}%` : 0 }}
             animate={{ width: percentileAnimated ? `${metrics.percentile_estimate}%` : 0 }}
@@ -421,6 +425,9 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           />
         </div>
       </div>
+
+      {/* ===== AUDIO QUALITY WARNING ===== */}
+      <AudioQualityIndicator avgConfidence={scoresJson.avg_confidence} />
 
       {/* ===== METRICS ROW ===== */}
       <div className="bg-paper rounded-xl border border-mist/60 shadow-sm overflow-hidden">
@@ -456,9 +463,12 @@ export function SessionReport({ sessionId }: SessionReportProps) {
 
       {/* ===== AI SUMMARY BLOCK ===== */}
       <div className="pl-6 border-l-2 border-mist">
-        <p className="text-xs text-stone uppercase tracking-wider mb-2">
-          {summaryOverride ? "teacher's note" : "summary"}
-        </p>
+        <div className="flex items-center gap-2 mb-2">
+          <p className="text-xs text-stone uppercase tracking-wider">
+            {summaryOverride ? "teacher's note" : "ai observation"}
+          </p>
+          {!summaryOverride && <AIBadge />}
+        </div>
         <p
           className={`font-serif text-lg text-ink leading-relaxed cursor-pointer hover:bg-mist/30 transition-colors rounded px-2 py-1 -mx-2 ${
             summaryOverride ? "" : "italic"
@@ -478,7 +488,10 @@ export function SessionReport({ sessionId }: SessionReportProps) {
       {/* ===== ERROR PATTERNS ===== */}
       {error_patterns && error_patterns.length > 0 && (
         <div>
-          <p className="text-xs text-stone uppercase tracking-wider mb-3">patterns</p>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-xs text-stone uppercase tracking-wider">suggested patterns</p>
+            <AIBadge />
+          </div>
           <div className="space-y-4">
             {error_patterns.slice(0, 3).map((pattern, idx) => (
               <div key={pattern.id ?? `pattern-${idx}`}>
@@ -509,8 +522,11 @@ export function SessionReport({ sessionId }: SessionReportProps) {
 
       {error_patterns && error_patterns.length === 0 && (
         <div>
-          <p className="text-xs text-stone uppercase tracking-wider mb-3">patterns</p>
-          <p className="text-sm text-stone italic">No notable patterns.</p>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-xs text-stone uppercase tracking-wider">suggested patterns</p>
+            <AIBadge />
+          </div>
+          <p className="text-sm text-stone italic">No notable patterns identified.</p>
         </div>
       )}
 
@@ -596,6 +612,12 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         </div>
       )}
 
+      {/* ===== DETAILED DATA PANEL ===== */}
+      <DetailedDataPanel events={events} />
+
+      {/* ===== TEACHER NOTES ===== */}
+      <TeacherNotesSection sessionId={sessionId} />
+
       {/* ===== FOOTER ACTIONS ===== */}
       <div className="flex items-center justify-between text-sm">
         <div className="flex items-center gap-4">
@@ -626,7 +648,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             onClick={() => handleOpenOverride("wcpm", metrics.wcpm)}
             className="text-stone hover:text-ink transition-colors"
           >
-            Disagree with this score?
+            Review or adjust scores
           </button>
         </div>
       </div>

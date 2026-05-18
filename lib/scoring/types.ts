@@ -23,7 +23,7 @@ export interface ScoringMetrics {
   correct_words: number;
   total_words_attempted: number;
   percentile_estimate: number;
-  percentile_band: "success" | "warning" | "alert";
+  percentile_band: "above" | "approaching" | "below";
 }
 
 export interface ErrorPattern {

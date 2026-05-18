@@ -6,12 +6,12 @@ import { SessionEvent, ScoringMetrics } from "@/lib/scoring/types";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { SCORE_REVEAL } from "@/lib/animation/constants";
 
-// Concise explanations for each dimension
+// Tooltips clarifying these are AI estimates
 const DIMENSION_INFO: Record<string, string> = {
-  expression: "Variation in tone and emphasis",
-  phrasing: "Natural pauses at phrase boundaries",
-  smoothness: "Reading without frequent corrections",
-  pace: "Consistent reading speed (WCPM)",
+  expression: "AI estimate based on timing variation",
+  phrasing: "AI estimate based on pause patterns",
+  smoothness: "AI estimate based on self-corrections",
+  pace: "AI estimate based on reading speed",
 };
 
 function InfoTooltip({ text, align = "left" }: { text: string; align?: "left" | "right" }) {

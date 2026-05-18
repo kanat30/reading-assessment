@@ -83,7 +83,7 @@ export function OverridePanel({
               {type === "wcpm" && (
                 <div className="space-y-6">
                   <h3 className="text-lg font-medium text-ink">
-                    What was the correct WCPM?
+                    What WCPM did you observe?
                   </h3>
 
                   <div className="flex justify-center">

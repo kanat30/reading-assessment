@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { SyncedTranscript } from "./SyncedTranscript";
 import { ProsodyGauges } from "./ProsodyGauges";
+import { AIBadge } from "./AIBadge";
 import { SessionEvent, ScoringMetrics } from "@/lib/scoring/types";
 
 // Dynamic import for ReportWaveform (heavy WaveSurfer dependency)
@@ -83,9 +84,12 @@ export function ReportClient({
 
       {/* Prosody gauges */}
       <div>
-        <h3 className="text-sm font-medium text-stone uppercase tracking-wide mb-4">
-          Fluency Dimensions
-        </h3>
+        <div className="flex items-center gap-2 mb-4">
+          <h3 className="text-sm font-medium text-stone uppercase tracking-wide">
+            Fluency Dimensions
+          </h3>
+          <AIBadge />
+        </div>
         <ProsodyGauges events={events} metrics={metrics} isVisible={isVisible} onDotClick={onProsodyDotClick} />
       </div>
 

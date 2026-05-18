@@ -42,7 +42,7 @@ export function calculateMetrics(
       correct_words: 0,
       total_words_attempted: 0,
       percentile_estimate: 1,
-      percentile_band: "alert",
+      percentile_band: "below",
     };
   }
 
@@ -56,13 +56,13 @@ export function calculateMetrics(
   const percentile_estimate = estimatePercentile(wcpm);
 
   // Determine percentile band
-  let percentile_band: "success" | "warning" | "alert";
+  let percentile_band: "above" | "approaching" | "below";
   if (wcpm >= NORMS.percentile_50) {
-    percentile_band = "success";
+    percentile_band = "above";
   } else if (wcpm >= NORMS.percentile_25) {
-    percentile_band = "warning";
+    percentile_band = "approaching";
   } else {
-    percentile_band = "alert";
+    percentile_band = "below";
   }
 
   return {
