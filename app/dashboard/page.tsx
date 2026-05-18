@@ -75,6 +75,22 @@ export default async function DashboardPage() {
     .eq("school_id", teacher.school_id)
     .order("created_at", { ascending: false });
 
+  // Get active assessments with share tokens for this teacher's school
+  const { data: activeAssessments } = await supabase
+    .from("assessments")
+    .select(`
+      id,
+      share_token,
+      class_label,
+      created_at,
+      expires_at,
+      use_numbered_students,
+      expected_student_count,
+      passages(id, title, grade_band)
+    `)
+    .eq("school_id", teacher.school_id)
+    .order("created_at", { ascending: false });
+
   // Transform sessions to match expected types (Supabase returns nested objects)
   const transformedSessions = (sessions || []).map((s) => ({
     ...s,
@@ -93,6 +109,12 @@ export default async function DashboardPage() {
     passages: t.passages as unknown as { id: string; title: string; grade_band: string; word_count: number },
   }));
 
+  // Transform active assessments to match expected types
+  const transformedActiveAssessments = (activeAssessments || []).map((a) => ({
+    ...a,
+    passages: a.passages as unknown as { id: string; title: string; grade_band: string },
+  }));
+
   return (
     <DashboardClient
       teacher={teacher}
@@ -101,6 +123,7 @@ export default async function DashboardPage() {
       classLabels={classLabels as string[]}
       passages={passages || []}
       templates={transformedTemplates}
+      activeAssessments={transformedActiveAssessments}
     />
   );
 }

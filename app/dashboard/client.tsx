@@ -102,6 +102,21 @@ interface Template {
   };
 }
 
+interface ActiveAssessment {
+  id: string;
+  share_token: string;
+  class_label: string;
+  created_at: string;
+  expires_at: string | null;
+  use_numbered_students: boolean;
+  expected_student_count: number | null;
+  passages: {
+    id: string;
+    title: string;
+    grade_band: string;
+  };
+}
+
 interface DashboardClientProps {
   teacher: Teacher;
   school: School;
@@ -109,6 +124,7 @@ interface DashboardClientProps {
   classLabels: string[];
   passages: Passage[];
   templates: Template[];
+  activeAssessments: ActiveAssessment[];
 }
 
 type CreateStep = "closed" | "choose" | "passage" | "questions" | "label" | "done";
@@ -121,6 +137,7 @@ export function DashboardClient({
   classLabels: initialClassLabels,
   passages,
   templates: initialTemplates,
+  activeAssessments: initialActiveAssessments,
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -172,6 +189,14 @@ export function DashboardClient({
   // Link expiration state
   const [expirationDuration, setExpirationDuration] = useState<ExpirationDuration>("none");
 
+  // Active assessments panel state
+  const [activeAssessments, setActiveAssessments] = useState(initialActiveAssessments);
+  const [showActiveAssessmentsPanel, setShowActiveAssessmentsPanel] = useState(false);
+  const [copiedAssessmentId, setCopiedAssessmentId] = useState<string | null>(null);
+
+  // Class filter dropdown state
+  const [showClassDropdown, setShowClassDropdown] = useState(false);
+
   // Numbered students state
   const [useNumberedStudents, setUseNumberedStudents] = useState(false);
   const [expectedStudentCount, setExpectedStudentCount] = useState(20);
@@ -216,6 +241,16 @@ export function DashboardClient({
     if (activeDateFilter !== "all") params.set("date", activeDateFilter);
     const query = params.toString();
     router.push(query ? `/dashboard?${query}` : "/dashboard", { scroll: false });
+    setShowClassDropdown(false);
+  };
+
+  // Get selected class label for display
+  const getSelectedClassLabel = () => {
+    if (activeFilter === "all") return "All classes";
+    const found = classLabels.find(
+      (label) => label.toLowerCase().replace(/\s+/g, "-") === activeFilter
+    );
+    return found || "All classes";
   };
 
   // Handle date filter change (preserves class filter)
@@ -232,16 +267,27 @@ export function DashboardClient({
     setExpandedSessionId((prev) => (prev === sessionId ? null : sessionId));
   };
 
-  // Handle escape key to collapse expanded row
+  // Handle escape key to collapse expanded row and close dropdowns
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && expandedSessionId) {
-        setExpandedSessionId(null);
+      if (e.key === "Escape") {
+        if (showClassDropdown) setShowClassDropdown(false);
+        else if (expandedSessionId) setExpandedSessionId(null);
+      }
+    };
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (showClassDropdown && !target.closest("[data-class-dropdown]")) {
+        setShowClassDropdown(false);
       }
     };
     window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [expandedSessionId]);
+    window.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [expandedSessionId, showClassDropdown]);
 
   // Realtime subscription for new sessions
   // Falls back to polling if Realtime is unreliable in Vercel serverless
@@ -490,6 +536,24 @@ export function DashboardClient({
     if (!classLabels.includes(classLabel.trim())) {
       setClassLabels((prev) => [...prev, classLabel.trim()]);
     }
+
+    // Add new assessment to active assessments list
+    const newAssessment: ActiveAssessment = {
+      id: crypto.randomUUID(), // Temporary ID, will be refreshed on next page load
+      share_token: shareToken,
+      class_label: classLabel.trim(),
+      created_at: new Date().toISOString(),
+      expires_at: calculateExpiresAt(expirationDuration),
+      use_numbered_students: useNumberedStudents,
+      expected_student_count: useNumberedStudents ? expectedStudentCount : null,
+      passages: {
+        id: selectedPassage.id,
+        title: selectedPassage.title,
+        grade_band: selectedPassage.grade_band,
+      },
+    };
+    setActiveAssessments((prev) => [newAssessment, ...prev]);
+
     setCreateStep("done");
   };
 
@@ -499,6 +563,36 @@ export function DashboardClient({
     await navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  // Copy assessment link from active assessments panel
+  const handleCopyAssessmentLink = async (assessment: ActiveAssessment) => {
+    const url = `${window.location.origin}/read/${assessment.share_token}`;
+    await navigator.clipboard.writeText(url);
+    setCopiedAssessmentId(assessment.id);
+    setTimeout(() => setCopiedAssessmentId(null), 1500);
+  };
+
+  // Check if assessment link is expired
+  const isAssessmentExpired = (assessment: ActiveAssessment) => {
+    if (!assessment.expires_at) return false;
+    return new Date(assessment.expires_at) < new Date();
+  };
+
+  // Format expiration time
+  const formatExpiration = (assessment: ActiveAssessment) => {
+    if (!assessment.expires_at) return "Never expires";
+    const expiresAt = new Date(assessment.expires_at);
+    const now = new Date();
+    if (expiresAt < now) return "Expired";
+
+    const diff = expiresAt.getTime() - now.getTime();
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `Expires in ${days}d`;
+    if (hours > 0) return `Expires in ${hours}h`;
+    return "Expires soon";
   };
 
   const closePanel = () => {
@@ -728,8 +822,11 @@ export function DashboardClient({
                 </p>
                 <button
                   onClick={() => setCreateStep("choose")}
-                  className="bg-accent-blue text-paper px-6 py-3 rounded-lg text-base font-medium hover:bg-accent-blue/90 transition-colors"
+                  className="inline-flex items-center gap-2 bg-accent-blue text-paper px-6 py-3 rounded-lg text-base font-medium hover:bg-accent-blue/90 transition-colors shadow-sm"
                 >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
                   Create your first assessment
                 </button>
               </div>
@@ -783,100 +880,147 @@ export function DashboardClient({
               </h1>
             </div>
 
-            {/* Filters row */}
-            <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-              {/* Class label filter */}
-              <div className="flex items-center gap-1 text-sm flex-wrap">
-                <button
-                  onClick={() => handleFilterChange("all")}
-                  className={`transition-colors duration-120 ${
-                    activeFilter === "all"
-                      ? "text-ink font-medium"
-                      : "text-stone hover:text-ink"
-                  }`}
-                >
-                  all
-                </button>
-                {classLabels.map((label) => (
-                  <span key={label} className="flex items-center">
-                    <span className="text-mist mx-2">·</span>
-                    <button
-                      onClick={() => handleFilterChange(label)}
-                      className={`transition-colors duration-120 ${
-                        activeFilter === label.toLowerCase().replace(/\s+/g, "-")
-                          ? "text-ink font-medium"
-                          : "text-stone hover:text-ink"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  </span>
-                ))}
-                {/* Create new button - inline with filters */}
-                <span className="text-mist mx-2">·</span>
-                <button
-                  onClick={() => setCreateStep("choose")}
-                  className="text-accent-blue hover:text-accent-blue/80 transition-colors duration-120"
-                >
-                  + new
-                </button>
-                {/* Templates management button */}
-                {templates.length > 0 && (
-                  <>
-                    <span className="text-mist mx-2">·</span>
-                    <button
-                      onClick={() => setShowTemplatesPanel(true)}
-                      className="text-stone hover:text-ink transition-colors duration-120"
-                    >
-                      templates
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* Date filter */}
-              <div className="flex items-center gap-1 text-sm">
-                <button
-                  onClick={() => handleDateFilterChange("today")}
-                  className={`px-2 py-1 rounded transition-colors duration-120 ${
-                    activeDateFilter === "today"
-                      ? "bg-mist text-ink font-medium"
-                      : "text-stone hover:text-ink"
-                  }`}
-                >
-                  today
-                </button>
-                <button
-                  onClick={() => handleDateFilterChange("week")}
-                  className={`px-2 py-1 rounded transition-colors duration-120 ${
-                    activeDateFilter === "week"
-                      ? "bg-mist text-ink font-medium"
-                      : "text-stone hover:text-ink"
-                  }`}
-                >
-                  this week
-                </button>
-                <button
-                  onClick={() => handleDateFilterChange("all")}
-                  className={`px-2 py-1 rounded transition-colors duration-120 ${
-                    activeDateFilter === "all"
-                      ? "bg-mist text-ink font-medium"
-                      : "text-stone hover:text-ink"
-                  }`}
-                >
-                  all time
-                </button>
-              </div>
-            </div>
-
-            {/* Two-column: readings list + quick tips (hide sidebar when expanded) */}
+            {/* Two-column: filters + readings list + quick tips */}
             <div className={`grid gap-8 items-start ${
               expandedSessionId
                 ? "grid-cols-1"
                 : "grid-cols-1 lg:grid-cols-[1fr_200px]"
             }`}>
-            {/* Sessions list */}
-            <div className="space-y-0">
+              {/* Left column: Filters + Sessions */}
+              <div>
+                {/* Filters row */}
+                <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+                  {/* Left side: Class dropdown + Date filters */}
+                  <div className="flex items-center gap-4">
+                    {/* Class dropdown */}
+                    {classLabels.length > 0 && (
+                      <div className="relative" data-class-dropdown>
+                        <button
+                          onClick={() => setShowClassDropdown(!showClassDropdown)}
+                          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-mist hover:border-stone/40 bg-paper text-sm transition-colors"
+                        >
+                          <span className={activeFilter === "all" ? "text-stone" : "text-ink font-medium"}>
+                            {getSelectedClassLabel()}
+                          </span>
+                          <svg
+                            className={`w-4 h-4 text-stone transition-transform ${showClassDropdown ? "rotate-180" : ""}`}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+
+                        {/* Dropdown menu */}
+                        <AnimatePresence>
+                          {showClassDropdown && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -8 }}
+                              transition={{ duration: 0.15 }}
+                              className="absolute top-full left-0 mt-1 min-w-[160px] bg-paper border border-mist rounded-lg shadow-lg z-20 py-1"
+                            >
+                              <button
+                                onClick={() => handleFilterChange("all")}
+                                className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                                  activeFilter === "all"
+                                    ? "bg-mist/50 text-ink font-medium"
+                                    : "text-stone hover:bg-mist/30 hover:text-ink"
+                                }`}
+                              >
+                                All classes
+                              </button>
+                              {classLabels.map((label) => (
+                                <button
+                                  key={label}
+                                  onClick={() => handleFilterChange(label)}
+                                  className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                                    activeFilter === label.toLowerCase().replace(/\s+/g, "-")
+                                      ? "bg-mist/50 text-ink font-medium"
+                                      : "text-stone hover:bg-mist/30 hover:text-ink"
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    )}
+
+                    {/* Date filter pills */}
+                    <div className="flex items-center gap-1 text-sm">
+                      <button
+                        onClick={() => handleDateFilterChange("today")}
+                        className={`px-2.5 py-1 rounded transition-colors duration-120 ${
+                          activeDateFilter === "today"
+                            ? "bg-mist text-ink font-medium"
+                            : "text-stone hover:text-ink"
+                        }`}
+                      >
+                        today
+                      </button>
+                      <button
+                        onClick={() => handleDateFilterChange("week")}
+                        className={`px-2.5 py-1 rounded transition-colors duration-120 ${
+                          activeDateFilter === "week"
+                            ? "bg-mist text-ink font-medium"
+                            : "text-stone hover:text-ink"
+                        }`}
+                      >
+                        this week
+                      </button>
+                      <button
+                        onClick={() => handleDateFilterChange("all")}
+                        className={`px-2.5 py-1 rounded transition-colors duration-120 ${
+                          activeDateFilter === "all"
+                            ? "bg-mist text-ink font-medium"
+                            : "text-stone hover:text-ink"
+                        }`}
+                      >
+                        all time
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Right side: Links, Templates, New Assessment */}
+                  <div className="flex items-center gap-3">
+                    {/* Links button */}
+                    {activeAssessments.length > 0 && (
+                      <button
+                        onClick={() => setShowActiveAssessmentsPanel(true)}
+                        className="text-sm text-stone hover:text-ink transition-colors"
+                      >
+                        Links
+                      </button>
+                    )}
+                    {/* Templates button */}
+                    {templates.length > 0 && (
+                      <button
+                        onClick={() => setShowTemplatesPanel(true)}
+                        className="text-sm text-stone hover:text-ink transition-colors"
+                      >
+                        Templates
+                      </button>
+                    )}
+                    {/* New button - prominent */}
+                    <button
+                      onClick={() => setCreateStep("choose")}
+                      className="flex items-center gap-2 bg-accent-blue text-paper px-4 py-2 rounded-lg text-sm font-medium hover:bg-accent-blue/90 transition-colors shadow-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      New
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sessions list */}
+                <div className="space-y-0">
               <AnimatePresence initial={false}>
                 {filteredSessions.map((session) => {
                   const student = session.students;
@@ -1002,19 +1146,20 @@ export function DashboardClient({
                   );
                 })}
               </AnimatePresence>
-            </div>
-
-            {/* Quick tips sidebar - hidden when report is expanded */}
-            {!expandedSessionId && (
-              <div className="hidden lg:block">
-                <div className="sticky top-8 text-sm text-stone space-y-2 border border-mist/60 rounded-lg p-4 bg-paper">
-                  <p className="font-medium text-ink text-xs uppercase tracking-wide mb-3">Quick tips</p>
-                  <p>Click a row to see the full report</p>
-                  <p>Filter by class or date above</p>
-                  <p>New readings appear automatically</p>
                 </div>
               </div>
-            )}
+
+              {/* Quick tips sidebar - hidden when report is expanded */}
+              {!expandedSessionId && (
+                <div className="hidden lg:block">
+                  <div className="sticky top-8 text-sm text-stone space-y-2 border border-mist/60 rounded-lg p-4 bg-paper">
+                    <p className="font-medium text-ink text-xs uppercase tracking-wide mb-3">Quick tips</p>
+                    <p>Click a row to see the full report</p>
+                    <p>Filter by class or date above</p>
+                    <p>New readings appear automatically</p>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1800,6 +1945,124 @@ export function DashboardClient({
                         )}
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Active Assessments panel */}
+      <AnimatePresence>
+        {showActiveAssessmentsPanel && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.4 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowActiveAssessmentsPanel(false)}
+              className="fixed inset-0 bg-ink z-40"
+            />
+
+            {/* Panel */}
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ duration: 0.28, ease: "easeOut" }}
+              className="fixed right-0 top-0 bottom-0 w-[480px] max-w-full bg-paper border-l border-mist z-50 overflow-y-auto"
+            >
+              <div className="px-16 py-12 max-sm:px-6">
+                <div className="flex items-center justify-between mb-8">
+                  <h2 className="font-serif text-xl font-semibold text-ink">
+                    Assessment Links
+                  </h2>
+                  <button
+                    onClick={() => setShowActiveAssessmentsPanel(false)}
+                    className="p-2 rounded-lg text-stone hover:text-ink hover:bg-mist/50 transition-colors"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <p className="text-sm text-stone mb-6">
+                  Copy links to share with students. Expired links are no longer active.
+                </p>
+
+                {activeAssessments.length === 0 ? (
+                  <div className="text-center py-12">
+                    <p className="text-stone">No assessments yet.</p>
+                    <p className="text-sm text-stone mt-2">
+                      Create an assessment to get a shareable link.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {activeAssessments.map((assessment) => {
+                      const expired = isAssessmentExpired(assessment);
+                      const isCopied = copiedAssessmentId === assessment.id;
+
+                      return (
+                        <div
+                          key={assessment.id}
+                          className={`p-4 rounded-lg border transition-colors ${
+                            expired
+                              ? "border-mist/50 bg-mist/20 opacity-60"
+                              : "border-mist hover:border-stone/30"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-ink truncate">
+                                {assessment.class_label}
+                              </p>
+                              <p className="text-sm text-stone mt-1">
+                                {assessment.passages.title}
+                              </p>
+                              <p className={`text-xs mt-2 ${expired ? "text-alert" : "text-stone"}`}>
+                                {formatExpiration(assessment)}
+                                {assessment.use_numbered_students && (
+                                  <span className="ml-2">· Numbered students</span>
+                                )}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleCopyAssessmentLink(assessment)}
+                              disabled={expired}
+                              className={`flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
+                                expired
+                                  ? "bg-mist text-stone/50 cursor-not-allowed"
+                                  : isCopied
+                                  ? "bg-success text-paper"
+                                  : "bg-accent-blue text-paper hover:bg-accent-blue/90"
+                              }`}
+                            >
+                              {isCopied ? (
+                                <span className="flex items-center gap-1">
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                  Copied
+                                </span>
+                              ) : (
+                                "Copy link"
+                              )}
+                            </button>
+                          </div>
+
+                          {/* Show the actual URL */}
+                          {!expired && (
+                            <div className="mt-3 p-2 bg-mist/50 rounded text-xs font-mono text-stone break-all">
+                              {typeof window !== "undefined" ? window.location.origin : ""}/read/{assessment.share_token}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
