@@ -182,8 +182,28 @@ function ComprehensionContent({ token }: { token: string }) {
       transition={{ duration: 0.24 }}
       className="min-h-screen bg-paper flex flex-col"
     >
+      {/* Flow progress indicator */}
+      <div className="pt-6 px-6">
+        <div className="max-w-[600px] mx-auto flex items-center justify-center gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-success" />
+            <span className="text-stone">Name</span>
+          </div>
+          <span className="text-mist">─</span>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-success" />
+            <span className="text-stone">Reading</span>
+          </div>
+          <span className="text-mist">─</span>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-accent-blue" />
+            <span className="text-ink font-medium">Questions</span>
+          </div>
+        </div>
+      </div>
+
       {/* Header */}
-      <div className="pt-8 px-6">
+      <div className="pt-6 px-6">
         <div className="max-w-[600px] mx-auto">
           <p className="text-sm text-stone tracking-wide mb-1">
             Comprehension Check
@@ -247,8 +267,21 @@ function ComprehensionContent({ token }: { token: string }) {
               value={answers[currentQ.id] || ""}
               onChange={(e) => handleAnswerChange(currentQ.id, e.target.value)}
               placeholder="Type your answer here..."
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
               className="w-full h-32 p-4 border border-mist rounded-lg bg-paper text-ink font-serif text-lg resize-none focus:outline-none focus:ring-2 focus:ring-accent-blue/30 focus:border-accent-blue"
             />
+
+            {/* First question tip */}
+            {currentQuestion === 0 && (
+              <div className="flex items-start gap-2 mt-4 text-xs text-stone">
+                <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>Take your time. You can go back to change your answers.</span>
+              </div>
+            )}
           </motion.div>
         </div>
       </div>
@@ -259,9 +292,12 @@ function ComprehensionContent({ token }: { token: string }) {
           <button
             onClick={handlePrev}
             disabled={currentQuestion === 0}
-            className="text-sm text-stone hover:text-ink disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 text-sm text-stone border border-mist rounded-lg hover:bg-mist/30 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
           >
-            ← Previous
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Previous
           </button>
 
           {currentQuestion === questions.length - 1 ? (
@@ -275,9 +311,12 @@ function ComprehensionContent({ token }: { token: string }) {
           ) : (
             <button
               onClick={handleNext}
-              className="text-sm text-accent-blue hover:underline"
+              className="flex items-center gap-2 px-4 py-2 text-sm text-accent-blue border border-accent-blue/30 rounded-lg hover:bg-accent-blue/10 transition-colors"
             >
-              Next →
+              Next
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
             </button>
           )}
         </div>
