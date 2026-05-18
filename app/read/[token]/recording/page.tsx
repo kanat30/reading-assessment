@@ -27,6 +27,7 @@ type RecordingState =
   | "mic-denied"
   | "ready"
   | "initializing"
+  | "countdown"
   | "recording"
   | "uploading"
   | "offline"
@@ -62,6 +63,7 @@ function RecordingContent({ token }: { token: string }) {
   const [studentName, setStudentName] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [countdownValue, setCountdownValue] = useState<number | "Go!">(3);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(
     null
   );
@@ -81,28 +83,41 @@ function RecordingContent({ token }: { token: string }) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const checkMicPermission = async () => {
+  const acquireMicrophone = async () => {
+    setState("checking-mic");
+
     try {
-      // Check permission status
-      const permissionStatus = await navigator.permissions.query({
-        name: "microphone" as PermissionName,
-      });
+      // Actually request mic access - this triggers the browser permission prompt
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
 
-      if (permissionStatus.state === "denied") {
+      // Wait for audio track to be fully live (handles hardware warm-up)
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack && audioTrack.readyState !== "live") {
+        await new Promise<void>((resolve) => {
+          const checkState = () => {
+            if (audioTrack.readyState === "live") {
+              resolve();
+            } else {
+              requestAnimationFrame(checkState);
+            }
+          };
+          checkState();
+        });
+      }
+
+      setState("ready");
+    } catch (err) {
+      console.error("Microphone access error:", err);
+
+      if (err instanceof DOMException && err.name === "NotAllowedError") {
         setState("mic-denied");
-        return;
+      } else {
+        setState("error");
+        setErrorMessage(
+          "Unable to access microphone. Please check your browser settings."
+        );
       }
-
-      if (permissionStatus.state === "granted") {
-        setState("ready");
-        return;
-      }
-
-      // prompt state - we'll show the ready state and ask when they click
-      setState("ready");
-    } catch {
-      // Permissions API not supported, proceed to ready state
-      setState("ready");
     }
   };
 
@@ -152,7 +167,8 @@ function RecordingContent({ token }: { token: string }) {
       }
 
       setAssessment(data);
-      checkMicPermission();
+      // Request mic access immediately - this triggers browser permission prompt
+      acquireMicrophone();
     }
 
     loadAssessment();
@@ -173,95 +189,98 @@ function RecordingContent({ token }: { token: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const handleStartRecording = async () => {
-    setState("initializing");
+  const startActualRecording = async () => {
+    const mediaRecorder = mediaRecorderRef.current;
+    if (!mediaRecorder) return;
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+    // Wait for MediaRecorder to actually start before updating UI
+    await new Promise<void>((resolve, reject) => {
+      mediaRecorder.onstart = () => resolve();
+      mediaRecorder.onerror = (e) => reject(e);
+      // Request data every 1 second
+      mediaRecorder.start(1000);
+    });
 
-      // Wait for audio track to be fully live (handles hardware warm-up)
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack && audioTrack.readyState !== "live") {
-        await new Promise<void>((resolve) => {
-          const checkState = () => {
-            if (audioTrack.readyState === "live") {
-              resolve();
-            } else {
-              requestAnimationFrame(checkState);
-            }
-          };
-          checkState();
-        });
-      }
+    startTimeRef.current = Date.now();
+    setState("recording");
 
-      // Additional delay for hardware initialization on first permission grant
-      // This allows microphone hardware to fully spin up before capturing
-      await new Promise((resolve) => setTimeout(resolve, 300));
+    // Play tick sound
+    playTick();
 
-      // Configure MediaRecorder with Opus codec, 1s chunks
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: "audio/webm;codecs=opus",
-        audioBitsPerSecond: 24000, // 24kbps as specified
-      });
+    // Start timer
+    timerRef.current = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+  };
 
-      mediaRecorderRef.current = mediaRecorder;
-      chunkIndexRef.current = 0;
+  const runCountdown = () => {
+    setCountdownValue(3);
+    setState("countdown");
 
-      // Generate new session ID for this recording
-      audioSessionIdRef.current = uuidv4();
+    // 3 -> 2 -> 1 -> Go! -> start recording
+    setTimeout(() => {
+      playTick();
+      setCountdownValue(2);
+    }, 1000);
 
-      // Handle incoming chunks
-      mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0) {
-          const chunkIndex = chunkIndexRef.current++;
+    setTimeout(() => {
+      playTick();
+      setCountdownValue(1);
+    }, 2000);
 
-          // Store in IndexedDB for resilience
-          if (isIndexedDBAvailable()) {
-            try {
-              await appendChunk(
-                audioSessionIdRef.current,
-                chunkIndex,
-                event.data
-              );
-            } catch (e) {
-              console.error("Error storing chunk:", e);
-            }
+    setTimeout(() => {
+      playTick();
+      setCountdownValue("Go!");
+    }, 3000);
+
+    setTimeout(() => {
+      startActualRecording();
+    }, 3700);
+  };
+
+  const handleStartRecording = () => {
+    // Stream was already acquired on page load
+    const stream = streamRef.current;
+    if (!stream) {
+      // Fallback: try to acquire mic if somehow not ready
+      acquireMicrophone();
+      return;
+    }
+
+    // Configure MediaRecorder with Opus codec, 1s chunks
+    const mediaRecorder = new MediaRecorder(stream, {
+      mimeType: "audio/webm;codecs=opus",
+      audioBitsPerSecond: 24000, // 24kbps as specified
+    });
+
+    mediaRecorderRef.current = mediaRecorder;
+    chunkIndexRef.current = 0;
+
+    // Generate new session ID for this recording
+    audioSessionIdRef.current = uuidv4();
+
+    // Handle incoming chunks
+    mediaRecorder.ondataavailable = async (event) => {
+      if (event.data.size > 0) {
+        const chunkIndex = chunkIndexRef.current++;
+
+        // Store in IndexedDB for resilience
+        if (isIndexedDBAvailable()) {
+          try {
+            await appendChunk(
+              audioSessionIdRef.current,
+              chunkIndex,
+              event.data
+            );
+          } catch (e) {
+            console.error("Error storing chunk:", e);
           }
         }
-      };
-
-      // Wait for MediaRecorder to actually start before updating UI
-      await new Promise<void>((resolve, reject) => {
-        mediaRecorder.onstart = () => resolve();
-        mediaRecorder.onerror = (e) => reject(e);
-        // Request data every 1 second
-        mediaRecorder.start(1000);
-      });
-
-      startTimeRef.current = Date.now();
-      setState("recording");
-
-      // Play tick sound
-      playTick();
-
-      // Start timer
-      timerRef.current = setInterval(() => {
-        setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
-      }, 1000);
-    } catch (err) {
-      console.error("Microphone access error:", err);
-
-      // Check if permission was denied
-      if (err instanceof DOMException && err.name === "NotAllowedError") {
-        setState("mic-denied");
-      } else {
-        setState("error");
-        setErrorMessage(
-          "Unable to access microphone. Please check your browser settings."
-        );
       }
-    }
+    };
+
+    // Start countdown - recording will begin after 3-2-1-Go!
+    runCountdown();
   };
 
   const handleStop = async () => {
@@ -451,6 +470,59 @@ function RecordingContent({ token }: { token: string }) {
 
   return (
     <div className="min-h-screen bg-paper flex flex-col">
+      {/* Countdown overlay */}
+      <AnimatePresence>
+        {state === "countdown" && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80"
+          >
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={countdownValue}
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 1.5, opacity: 0 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                className="text-center"
+              >
+                <span className={`font-serif font-bold text-paper ${
+                  countdownValue === "Go!" ? "text-[80px]" : "text-[120px]"
+                }`}>
+                  {countdownValue}
+                </span>
+                {countdownValue !== "Go!" && (
+                  <p className="text-paper/60 text-lg mt-2">Get ready to read...</p>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Flow progress indicator */}
+      <div className="pt-6 px-6">
+        <div className="max-w-[680px] mx-auto flex items-center justify-center gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-success" />
+            <span className="text-stone">Name</span>
+          </div>
+          <span className="text-mist">─</span>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-accent-blue" />
+            <span className="text-ink font-medium">Reading</span>
+          </div>
+          <span className="text-mist">─</span>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-mist" />
+            <span className="text-stone">Questions</span>
+          </div>
+        </div>
+      </div>
+
       <div className="flex-1 flex items-center justify-center px-6 py-24 pb-48">
         <div className="max-w-[680px] w-full">
           {passage && (
@@ -477,12 +549,17 @@ function RecordingContent({ token }: { token: string }) {
               exit={{ opacity: 0 }}
               className="flex flex-col items-center py-6 px-6"
             >
-              {/* Pulsing indicator instead of spinner */}
-              <div className="w-16 h-16 rounded-full bg-mist flex items-center justify-center mb-4 animate-pulse">
-                <div className="w-3 h-3 rounded-full bg-stone" />
+              {/* Microphone icon with pulse */}
+              <div className="w-16 h-16 rounded-full bg-accent-blue/10 flex items-center justify-center mb-4 animate-pulse">
+                <svg className="w-7 h-7 text-accent-blue" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z" />
+                </svg>
               </div>
               <p className="text-base text-ink font-medium">
-                Checking microphone...
+                Connecting microphone...
+              </p>
+              <p className="text-sm text-stone text-center mt-1">
+                Please click &quot;Allow&quot; if your browser asks for permission
               </p>
             </motion.div>
           )}
@@ -495,6 +572,11 @@ function RecordingContent({ token }: { token: string }) {
               exit={{ opacity: 0 }}
               className="flex flex-col items-center py-6 px-6"
             >
+              {/* Mic ready indicator */}
+              <div className="flex items-center gap-1.5 text-xs text-success mb-3">
+                <span className="w-1.5 h-1.5 rounded-full bg-success" />
+                Microphone ready
+              </div>
               <button
                 onClick={handleStartRecording}
                 className="w-16 h-16 rounded-full bg-accent-blue cursor-pointer focus:outline-none focus:ring-4 focus:ring-accent-blue/30 transition-transform active:scale-95 flex items-center justify-center"

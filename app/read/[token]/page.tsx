@@ -156,12 +156,46 @@ export default function TokenPage({ params }: TokenPageProps) {
           >
             <div className="w-full max-w-md">
               <div className="text-center mb-8">
-                <h1 className="font-serif text-[32px] font-semibold text-ink mb-2">
-                  Welcome!
+                <h1 className="font-serif text-[28px] font-semibold text-ink">
+                  Reading Assessment
                 </h1>
-                <p className="text-base text-stone">
-                  Let&apos;s get started with your reading.
-                </p>
+              </div>
+
+              {/* Instructions - visual cards */}
+              <div className="mb-8 space-y-3">
+                <div className="flex items-center gap-4 p-4 rounded-xl bg-accent-blue/5 border border-accent-blue/10">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-accent-blue/10 flex items-center justify-center">
+                    <svg className="w-5 h-5 text-accent-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15.536a5 5 0 001.414 1.414m2.828-9.9a9 9 0 012.828-2.828" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-ink font-medium text-sm">Read aloud</p>
+                    <p className="text-stone text-xs">Read the passage out loud clearly</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 p-4 rounded-xl bg-success/5 border border-success/10">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-success/10 flex items-center justify-center">
+                    <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-ink font-medium text-sm">Stay close to mic</p>
+                    <p className="text-stone text-xs">Keep your microphone nearby</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 p-4 rounded-xl bg-warning/5 border border-warning/10">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-warning/10 flex items-center justify-center">
+                    <svg className="w-5 h-5 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-ink font-medium text-sm">Answer questions</p>
+                    <p className="text-stone text-xs">A few questions about what you read</p>
+                  </div>
+                </div>
               </div>
 
               <form onSubmit={handleNameSubmit} className="space-y-4">

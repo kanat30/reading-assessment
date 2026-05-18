@@ -205,12 +205,12 @@ function ComprehensionContent({ token }: { token: string }) {
       {/* Header */}
       <div className="pt-6 px-6">
         <div className="max-w-[600px] mx-auto">
-          <p className="text-sm text-stone tracking-wide mb-1">
-            Comprehension Check
-          </p>
-          <h1 className="font-serif text-xl font-semibold text-ink">
-            {passage?.title}
+          <h1 className="font-serif text-xl font-semibold text-ink mb-1">
+            Answer questions about what you read
           </h1>
+          <p className="text-sm text-stone">
+            {passage?.title}
+          </p>
         </div>
       </div>
 
@@ -248,13 +248,13 @@ function ComprehensionContent({ token }: { token: string }) {
           >
             {/* Question type badge */}
             <span
-              className={`inline-block text-xs px-2 py-1 rounded-full mb-4 ${
+              className={`inline-block text-xs px-3 py-1 rounded-full mb-4 ${
                 currentQ.question_type === "literal"
                   ? "bg-accent-blue/10 text-accent-blue"
-                  : "bg-warning/20 text-warning"
+                  : "bg-warning/10 text-warning"
               }`}
             >
-              {currentQ.question_type === "literal" ? "Find in text" : "Think about it"}
+              {currentQ.question_type === "literal" ? "From the story" : "What do you think?"}
             </span>
 
             {/* Question */}
@@ -263,15 +263,20 @@ function ComprehensionContent({ token }: { token: string }) {
             </p>
 
             {/* Answer textarea */}
-            <textarea
-              value={answers[currentQ.id] || ""}
-              onChange={(e) => handleAnswerChange(currentQ.id, e.target.value)}
-              placeholder="Type your answer here..."
-              spellCheck={false}
-              autoCorrect="off"
-              autoCapitalize="off"
-              className="w-full h-32 p-4 border border-mist rounded-lg bg-paper text-ink font-serif text-lg resize-none focus:outline-none focus:ring-2 focus:ring-accent-blue/30 focus:border-accent-blue"
-            />
+            <div className="relative">
+              <label className="block text-sm font-medium text-ink mb-2">
+                Your answer
+              </label>
+              <textarea
+                value={answers[currentQ.id] || ""}
+                onChange={(e) => handleAnswerChange(currentQ.id, e.target.value)}
+                placeholder="Type your answer here..."
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                className="w-full h-36 p-4 border-2 border-mist rounded-xl bg-white text-ink font-serif text-lg resize-none focus:outline-none focus:ring-2 focus:ring-accent-blue/30 focus:border-accent-blue shadow-sm"
+              />
+            </div>
 
             {/* First question tip */}
             {currentQuestion === 0 && (
