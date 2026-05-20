@@ -5,18 +5,7 @@ import { useRef, useState, useEffect, Suspense, use } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { v4 as uuidv4 } from "uuid";
 import { BreathingDot } from "@/components/BreathingDot";
-import {
-  appendChunk,
-  listOrphanedSessions,
-  clearSession,
-  isIndexedDBAvailable,
-} from "@/lib/audio/buffer";
-import {
-  uploadWithRetry,
-  startOfflineRecovery,
-  UploadProgress,
-  UploadParams,
-} from "@/lib/audio/upload";
+import { UploadProgress } from "@/lib/audio/upload";
 import { playTick, playError } from "@/lib/audio/sounds";
 import { createClient } from "@/lib/supabase/browser";
 
@@ -67,15 +56,19 @@ function RecordingContent({ token }: { token: string }) {
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(
     null
   );
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [hasDetectedAudio, setHasDetectedAudio] = useState(false);
 
   // Audio recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const chunkIndexRef = useRef<number>(0);
+  const audioChunksRef = useRef<Blob[]>([]); // Store chunks in memory instead of IndexedDB
   const audioSessionIdRef = useRef<string>(uuidv4());
-  const cleanupOfflineRef = useRef<(() => void) | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -83,12 +76,83 @@ function RecordingContent({ token }: { token: string }) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // Start monitoring audio levels to show visual feedback
+  const startAudioLevelMonitoring = (stream: MediaStream) => {
+    try {
+      const audioContext = new AudioContext();
+      const analyser = audioContext.createAnalyser();
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      analyser.fftSize = 256;
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+
+      const updateLevel = () => {
+        if (!analyserRef.current) return;
+
+        analyserRef.current.getByteFrequencyData(dataArray);
+        // Calculate average amplitude
+        const sum = dataArray.reduce((a, b) => a + b, 0);
+        const average = sum / dataArray.length;
+        // Normalize to 0-1 range
+        const normalizedLevel = Math.min(average / 128, 1);
+
+        setAudioLevel(normalizedLevel);
+
+        // Mark if we've detected any significant audio
+        if (normalizedLevel > 0.05) {
+          setHasDetectedAudio(true);
+        }
+
+        animationFrameRef.current = requestAnimationFrame(updateLevel);
+      };
+
+      updateLevel();
+    } catch (e) {
+      console.warn("Audio level monitoring not available:", e);
+    }
+  };
+
+  const stopAudioLevelMonitoring = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    setAudioLevel(0);
+  };
+
+  // Verify stream is still active and has working tracks
+  const isStreamActive = (stream: MediaStream): boolean => {
+    const tracks = stream.getAudioTracks();
+    if (tracks.length === 0) return false;
+
+    const track = tracks[0];
+    return track.readyState === "live" && track.enabled && !track.muted;
+  };
+
   const acquireMicrophone = async () => {
     setState("checking-mic");
 
     try {
-      // Actually request mic access - this triggers the browser permission prompt
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Request mic with explicit constraints for better audio capture
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          // Prefer default device but don't fail if constraints not met
+          channelCount: { ideal: 1 },
+          sampleRate: { ideal: 48000 },
+        }
+      });
       streamRef.current = stream;
 
       // Wait for audio track to be fully live (handles hardware warm-up)
@@ -118,21 +182,6 @@ function RecordingContent({ token }: { token: string }) {
           "Unable to access microphone. Please check your browser settings."
         );
       }
-    }
-  };
-
-  const checkOrphanedSessions = async () => {
-    if (!isIndexedDBAvailable()) return;
-
-    try {
-      const orphaned = await listOrphanedSessions();
-      if (orphaned.length > 0) {
-        console.log("Found orphaned recording sessions:", orphaned);
-        // For now, just log. Could show UI to recover
-        // In production, would attempt recovery or clear old sessions
-      }
-    } catch (e) {
-      console.error("Error checking orphaned sessions:", e);
     }
   };
 
@@ -172,18 +221,21 @@ function RecordingContent({ token }: { token: string }) {
     }
 
     loadAssessment();
-    checkOrphanedSessions();
 
     return () => {
       // Cleanup on unmount
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
-      if (cleanupOfflineRef.current) {
-        cleanupOfflineRef.current();
-      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      // Stop audio level monitoring
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -191,91 +243,133 @@ function RecordingContent({ token }: { token: string }) {
 
   const startActualRecording = async () => {
     const mediaRecorder = mediaRecorderRef.current;
-    if (!mediaRecorder) return;
-
-    // Wait for MediaRecorder to actually start before updating UI
-    await new Promise<void>((resolve, reject) => {
-      mediaRecorder.onstart = () => resolve();
-      mediaRecorder.onerror = (e) => reject(e);
-      // Request data every 1 second
-      mediaRecorder.start(1000);
-    });
-
-    startTimeRef.current = Date.now();
-    setState("recording");
-
-    // Play tick sound
-    playTick();
-
-    // Start timer
-    timerRef.current = setInterval(() => {
-      setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
-    }, 1000);
-  };
-
-  const runCountdown = () => {
-    setCountdownValue(3);
-    setState("countdown");
-
-    // 3 -> 2 -> 1 -> Go! -> start recording
-    setTimeout(() => {
-      playTick();
-      setCountdownValue(2);
-    }, 1000);
-
-    setTimeout(() => {
-      playTick();
-      setCountdownValue(1);
-    }, 2000);
-
-    setTimeout(() => {
-      playTick();
-      setCountdownValue("Go!");
-    }, 3000);
-
-    setTimeout(() => {
-      startActualRecording();
-    }, 3700);
-  };
-
-  const handleStartRecording = () => {
-    // Stream was already acquired on page load
     const stream = streamRef.current;
-    if (!stream) {
-      // Fallback: try to acquire mic if somehow not ready
-      acquireMicrophone();
+
+    if (!mediaRecorder || !stream) {
+      console.error("No mediaRecorder or stream available");
+      setState("error");
+      setErrorMessage("Failed to start recording. Please refresh and try again.");
       return;
     }
 
-    // Configure MediaRecorder with Opus codec, 1s chunks
-    const mediaRecorder = new MediaRecorder(stream, {
-      mimeType: "audio/webm;codecs=opus",
-      audioBitsPerSecond: 24000, // 24kbps as specified
-    });
+    try {
+      // Start recording - just call start, don't wait for onstart event
+      mediaRecorder.start(1000);
+
+      startTimeRef.current = Date.now();
+      setState("recording");
+
+      // Start audio level monitoring for visual feedback
+      startAudioLevelMonitoring(stream);
+
+      // Play tick sound
+      playTick();
+
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      }, 1000);
+    } catch (err) {
+      console.error("Failed to start recording:", err);
+      setState("error");
+      setErrorMessage("Failed to start recording. Please refresh and try again.");
+    }
+  };
+
+  const runCountdown = () => {
+    // Use a sequential approach for more reliable animation timing
+    const sequence: Array<{ value: number | "Go!"; delay: number }> = [
+      { value: 3, delay: 0 },
+      { value: 2, delay: 1000 },
+      { value: 1, delay: 2000 },
+      { value: "Go!", delay: 3000 },
+    ];
+
+    let currentIndex = 0;
+    setCountdownValue(3);
+    setState("countdown");
+
+    const runNextStep = () => {
+      currentIndex++;
+
+      if (currentIndex < sequence.length) {
+        playTick();
+        setCountdownValue(sequence[currentIndex].value);
+
+        // Schedule next step
+        const nextDelay = sequence[currentIndex + 1]
+          ? sequence[currentIndex + 1].delay - sequence[currentIndex].delay
+          : 700; // After "Go!", wait 700ms before starting
+
+        setTimeout(runNextStep, nextDelay);
+      } else {
+        // Countdown complete, start recording
+        startActualRecording();
+      }
+    };
+
+    // Start the sequence after showing "3" for 1 second
+    setTimeout(runNextStep, 1000);
+  };
+
+  const handleStartRecording = async () => {
+    // Always get a fresh stream right before recording to avoid stale streams
+    setState("initializing");
+
+    let stream: MediaStream;
+    try {
+      // Stop any existing stream first
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      // Get fresh stream with simple constraints
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: true
+      });
+      streamRef.current = stream;
+    } catch (err) {
+      console.error("Failed to get microphone:", err);
+      setState("mic-denied");
+      return;
+    }
+
+    // Reset audio detection state
+    setHasDetectedAudio(false);
+
+    // Find a supported mimeType
+    const mimeTypes = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",
+      "audio/ogg",
+    ];
+    let mimeType = "";
+    for (const type of mimeTypes) {
+      if (MediaRecorder.isTypeSupported(type)) {
+        mimeType = type;
+        break;
+      }
+    }
+
+    // Configure MediaRecorder
+    const options: MediaRecorderOptions = { audioBitsPerSecond: 64000 };
+    if (mimeType) {
+      options.mimeType = mimeType;
+    }
+
+    const mediaRecorder = new MediaRecorder(stream, options);
 
     mediaRecorderRef.current = mediaRecorder;
-    chunkIndexRef.current = 0;
+    audioChunksRef.current = []; // Clear any previous chunks
 
     // Generate new session ID for this recording
     audioSessionIdRef.current = uuidv4();
 
-    // Handle incoming chunks
-    mediaRecorder.ondataavailable = async (event) => {
+    // Handle incoming chunks - store directly in memory (simpler, works in incognito)
+    mediaRecorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
-        const chunkIndex = chunkIndexRef.current++;
-
-        // Store in IndexedDB for resilience
-        if (isIndexedDBAvailable()) {
-          try {
-            await appendChunk(
-              audioSessionIdRef.current,
-              chunkIndex,
-              event.data
-            );
-          } catch (e) {
-            console.error("Error storing chunk:", e);
-          }
-        }
+        audioChunksRef.current.push(event.data);
       }
     };
 
@@ -291,6 +385,9 @@ function RecordingContent({ token }: { token: string }) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+
+    // Stop audio level monitoring
+    stopAudioLevelMonitoring();
 
     setState("uploading");
 
@@ -309,67 +406,67 @@ function RecordingContent({ token }: { token: string }) {
       streamRef.current = null;
     }
 
-    const uploadParams: UploadParams = {
-      audioSessionId: audioSessionIdRef.current,
-      assessmentToken: token,
-      studentName: studentName,
-      durationSeconds: durationSeconds,
-    };
-
-    // Upload with retry logic
-    const result = await uploadWithRetry(uploadParams, (progress) => {
-      setUploadProgress(progress);
-    });
-
-    if (result.success && result.sessionId) {
-      // Play tick sound (chime will play after comprehension)
-      playTick();
-
-      // Navigate to comprehension page
-      router.push(`/read/${token}/comprehension?s=${result.sessionId}`);
-    } else if (result.isOffline) {
-      setState("offline");
-      playError();
-
-      // Start offline recovery polling
-      cleanupOfflineRef.current = startOfflineRecovery(
-        uploadParams,
-        (sessionId) => {
-          playTick();
-          router.push(`/read/${token}/comprehension?s=${sessionId}`);
-        },
-        (progress) => {
-          setUploadProgress(progress);
-          if (progress.status === "uploading") {
-            setState("uploading");
-          }
-        }
-      );
-    } else {
+    // Check if we have any audio chunks
+    if (audioChunksRef.current.length === 0) {
       setState("error");
       playError();
-      setErrorMessage(
-        result.error || "Something went wrong. Please try again."
-      );
+      setErrorMessage("No audio was recorded. Please try again.");
+      return;
+    }
+
+    // Assemble audio blob from in-memory chunks
+    const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+
+    // Check if blob has meaningful data
+    if (audioBlob.size < 1000) {
+      setState("error");
+      playError();
+      setErrorMessage("Recording was too short. Please try again.");
+      return;
+    }
+
+    setUploadProgress({ status: "uploading", attempt: 1, maxAttempts: 3, message: "Uploading..." });
+
+    // Upload directly without IndexedDB
+    try {
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "recording.webm");
+      formData.append("assessment_token", token);
+      formData.append("student_name", studentName);
+      formData.append("duration_seconds", durationSeconds.toString());
+
+      const response = await fetch("/api/score", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.status}`);
+      }
+
+      const { session_id } = await response.json();
+
+      setUploadProgress({ status: "success", attempt: 1, maxAttempts: 3, message: "Done!" });
+      playTick();
+      router.push(`/read/${token}/comprehension?s=${session_id}`);
+      return;
+    } catch (err) {
+      console.error("Upload error:", err);
+      setState("error");
+      playError();
+      setErrorMessage("Failed to upload recording. Please check your connection and try again.");
+      return;
     }
   };
 
   const handleRetry = async () => {
-    // Clear old session data
-    if (isIndexedDBAvailable()) {
-      try {
-        await clearSession(audioSessionIdRef.current);
-      } catch (e) {
-        console.error("Error clearing session:", e);
-      }
-    }
-
     // Reset state
+    audioChunksRef.current = [];
     setErrorMessage("");
     setElapsedTime(0);
     setUploadProgress(null);
+    setHasDetectedAudio(false);
     audioSessionIdRef.current = uuidv4();
-    chunkIndexRef.current = 0;
     setState("ready");
   };
 
@@ -486,7 +583,7 @@ function RecordingContent({ token }: { token: string }) {
                 initial={{ scale: 0.5, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 1.5, opacity: 0 }}
-                transition={{ duration: 0.3, ease: "easeOut" }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
                 className="text-center"
               >
                 <span className={`font-serif font-bold text-paper ${
@@ -627,10 +724,26 @@ function RecordingContent({ token }: { token: string }) {
               exit={{ opacity: 0 }}
               className="flex flex-col items-center py-6 px-6"
             >
-              {/* Timer */}
-              <p className="text-sm text-stone mb-4 font-mono">
-                {formatTime(elapsedTime)}
-              </p>
+              {/* Timer and audio level */}
+              <div className="flex items-center gap-3 mb-4">
+                <p className="text-sm text-stone font-mono">
+                  {formatTime(elapsedTime)}
+                </p>
+                {/* Audio level indicator */}
+                <div className="flex items-center gap-0.5 h-4">
+                  {[0.1, 0.2, 0.35, 0.5, 0.7].map((threshold, i) => (
+                    <div
+                      key={i}
+                      className={`w-1 rounded-full transition-all ${
+                        audioLevel > threshold
+                          ? "bg-success"
+                          : "bg-mist"
+                      }`}
+                      style={{ height: `${8 + i * 3}px` }}
+                    />
+                  ))}
+                </div>
+              </div>
 
               {/* Stop button with breathing dot effect */}
               <button

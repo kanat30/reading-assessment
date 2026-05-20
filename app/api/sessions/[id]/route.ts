@@ -26,7 +26,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   const { data: teacher } = await supabase
     .from("teachers")
     .select("school_id")
-    .eq("user_id", user.id)
+    .eq("auth_provider_id", user.id)
     .single();
 
   if (!teacher) {

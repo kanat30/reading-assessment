@@ -135,9 +135,10 @@ export async function POST(request: NextRequest) {
       answers: result.answers,
     });
   } catch (error) {
-    console.error("Comprehension API error:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("Comprehension API error:", errorMessage, error);
     return NextResponse.json(
-      { error: "Failed to process comprehension" },
+      { error: `Failed to grade comprehension: ${errorMessage}` },
       { status: 500 }
     );
   }

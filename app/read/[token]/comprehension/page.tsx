@@ -238,7 +238,7 @@ function ComprehensionContent({ token }: { token: string }) {
       </div>
 
       {/* Question card */}
-      <div className="flex-1 flex items-start justify-center px-6 pt-12 pb-8">
+      <div className="flex items-start justify-center px-6 pt-12 pb-8">
         <div className="max-w-[600px] w-full">
           <motion.div
             key={currentQuestion}

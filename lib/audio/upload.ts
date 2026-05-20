@@ -8,6 +8,10 @@ import { assembleBlob, clearSession } from "./buffer";
 // Retry delays in milliseconds
 const RETRY_DELAYS = [1000, 2000, 4000];
 
+// Minimum valid audio blob size (bytes)
+// A 1-second WebM/Opus chunk is typically 2-4KB, so 5 seconds of audio should be at least 10KB
+const MIN_AUDIO_BLOB_SIZE = 5000;
+
 // Offline polling interval
 const OFFLINE_POLL_INTERVAL = 30000; // 30 seconds
 
@@ -63,6 +67,15 @@ export async function uploadWithRetry(
   } catch (e) {
     console.error("Failed to assemble audio blob:", e);
     return { success: false, error: "Failed to assemble recording" };
+  }
+
+  // Validate blob has actual audio data
+  if (audioBlob.size < MIN_AUDIO_BLOB_SIZE) {
+    console.error(`Audio blob too small: ${audioBlob.size} bytes (minimum: ${MIN_AUDIO_BLOB_SIZE})`);
+    return {
+      success: false,
+      error: "No audio was recorded. Please check your microphone is working and try again."
+    };
   }
 
   // Attempt upload with retries

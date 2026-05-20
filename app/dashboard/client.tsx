@@ -872,9 +872,14 @@ export function DashboardClient({
         setSessions((prev) => prev.filter((s) => s.id !== deleteSession.id));
         setDeleteSession(null);
         setDeleteConfirmText("");
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Delete failed:", response.status, errorData);
+        alert(`Failed to delete: ${errorData.error || response.statusText}`);
       }
     } catch (error) {
       console.error("Error deleting session:", error);
+      alert("Failed to delete session. Please try again.");
     }
     setIsDeleting(false);
   };

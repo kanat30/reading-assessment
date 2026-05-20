@@ -32,11 +32,14 @@ interface StudentData {
   last_name: string;
 }
 
+type ComprehensionStatus = "correct" | "partial" | "incorrect";
+
 interface ComprehensionAnswer {
   id: string;
   question_id: string;
   student_answer: string;
   is_correct: boolean | null;
+  status: ComprehensionStatus | null;
   feedback: string | null;
   passage_questions: {
     id: string;
@@ -175,6 +178,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             question_id,
             student_answer,
             is_correct,
+            status,
             feedback,
             passage_questions(id, question, question_type, display_order)
           `)
@@ -571,7 +575,9 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                   <div
                     key={answer.id}
                     className={`w-2 h-2 rounded-full ${
-                      answer.is_correct ? "bg-success" : "bg-alert"
+                      answer.status === "correct" ? "bg-success"
+                        : answer.status === "partial" ? "bg-warning"
+                        : "bg-alert"
                     }`}
                   />
                 ))}
@@ -592,12 +598,14 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                       <span className="text-xs font-medium text-stone">Q{idx + 1}</span>
                       <span
                         className={`text-xs px-2 py-0.5 rounded-full ${
-                          answer.is_correct
+                          answer.status === "correct"
                             ? "bg-success/15 text-success"
+                            : answer.status === "partial"
+                            ? "bg-warning/15 text-warning"
                             : "bg-alert/15 text-alert"
                         }`}
                       >
-                        {answer.is_correct ? "Correct" : "Incorrect"}
+                        {answer.status === "correct" ? "Correct" : answer.status === "partial" ? "Partial" : "Incorrect"}
                       </span>
                     </div>
                     <p className="text-sm font-medium text-ink mb-2">{question.question}</p>

@@ -57,10 +57,13 @@ export interface ComprehensionQuestion {
   type: "literal" | "inferential";  // Literal = directly in text, Inferential = requires reasoning
 }
 
+export type ComprehensionStatus = "correct" | "partial" | "incorrect";
+
 export interface ComprehensionAnswer {
   question_id: string;
   student_answer: string;
-  is_correct: boolean;
+  is_correct: boolean;           // Legacy: true if status is "correct"
+  status: ComprehensionStatus;   // "correct" | "partial" | "incorrect"
   feedback: string;
 }
 
