@@ -1,36 +1,106 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FluencyScope
 
-## Getting Started
+A web app for middle-school teachers to assess oral reading fluency without sitting 1:1 with each student.
 
-First, run the development server:
+A teacher picks a passage and generates a shareable link. A student opens the link on a Chromebook, types their name, reads the passage aloud for ~60 seconds while the browser records audio, and submits. The app transcribes the audio, aligns it against the expected text, scores fluency, and produces a teacher report with audio playback, a synced transcript, timestamped error markers, and an LLM-written summary.
+
+It scores against established frameworks:
+
+- **Hasbrouck & Tindal ORF norms** — Words Correct Per Minute (WCPM) → grade-band percentile (above / approaching / below).
+- **NAEP / Rasinski-style prosody** — a 1–4 multidimensional fluency level (expression, phrasing, pace).
+- **Comprehension** — short literal/inferential questions, auto-graded with partial credit.
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Framework | Next.js 16 (App Router) + React 19, as a PWA (Serwist service worker) |
+| Hosting | Vercel |
+| Database / Auth / Storage | Supabase (Postgres + RLS, Supabase Auth, Supabase Storage) |
+| Audio capture | Browser `MediaRecorder` API, buffered locally before upload |
+| Speech-to-text | Deepgram (`nova-3` model), word-level timestamps |
+| LLM | Claude API (`@anthropic-ai/sdk`) — summaries, comprehension grading, question generation |
+| Styling | Tailwind CSS v4, shadcn/Base UI components, Framer Motion |
+| Waveform | wavesurfer.js |
+
+The scoring engine (alignment, metrics, prosody, error patterns) is **deterministic code**, not AI. The LLM only ever sees structured event data and text — never raw audio.
+
+## Getting started
+
+### Prerequisites
+
+- Node.js 20+
+- A Supabase project (run the migrations in `supabase/migrations/`)
+- Deepgram and Anthropic API keys
+
+### Environment variables
+
+Create `.env.local`:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+NEXT_PUBLIC_SUPABASE_URL=        # Supabase project URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY=   # Supabase anon/public key
+SUPABASE_SERVICE_ROLE_KEY=       # Supabase service role key (server-only)
+SUPABASE_ACCESS_TOKEN=           # Supabase CLI token (for migrations/scripts)
+DEEPGRAM_API_KEY=                # Deepgram ASR
+ANTHROPIC_API_KEY=               # Claude API
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Run
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev      # http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Other scripts:
 
-## Learn More
+```bash
+npm run build    # production build
+npm run start    # serve production build
+npm run lint     # eslint
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Project structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+app/
+  api/                 Route handlers (scoring, comprehension, overrides, notes, templates, audio)
+  auth/                Login / signup (Supabase Auth)
+  dashboard/           Teacher dashboard — assessments & sessions list
+  admin/               Admin console + analytics
+  read/[token]/        Student flow: name entry → recording → comprehension → done
+  report/[id]/         Teacher report view (+ print view)
+  sw.ts                Serwist service worker (PWA)
+lib/
+  scoring/             Deterministic engine: alignment, metrics, prosody, patterns, summary, comprehension
+  supabase/            Browser / server / admin Supabase clients
+  analytics/           Dashboard analytics queries & recommendations
+  audio/               Audio buffer, upload, sound effects
+components/            Report UI, transcript, waveform, override popovers, etc.
+hooks/                 useWaveSurfer, useCountUp, useIntersectionObserver, useReducedMotion
+supabase/migrations/   Ordered SQL migrations (schema + RLS)
+scripts/               One-off maintenance scripts (run with tsx)
+prep-files/            Background planning docs (architecture, design, build checklist)
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## The scoring pipeline
 
-## Deploy on Vercel
+When a student submits, `POST /api/score` runs server-side (async — the student never waits):
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. **ASR** — Deepgram transcribes the audio with word-level timestamps.
+2. **Alignment** — diff the transcript against the expected passage; classify each word as correct, substitution, omission, insertion, self-correction, or mispronunciation.
+3. **Metrics** — WCPM, accuracy %, percentile band.
+4. **Prosody** — acoustic/timing features → a 1–4 fluency level.
+5. **Error patterns** — group errors (e.g. multisyllabic words, suffixes, function words).
+6. **Summary** — Claude writes a short teacher-facing summary from the structured data.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Results are written back to `sessions` and `session_events`. Teachers can override any AI decision (word-level events, comprehension grades, prosody) from the report; overrides are stored separately and metrics recompute.
+
+## Data model
+
+Multi-tenant by `school_id` with Supabase Row-Level Security. Core tables: `schools`, `teachers`, `students`, `passages`, `assessments`, `sessions`, `session_events`, plus `session_event_overrides`, `passage_questions`, `assessment_templates`, and session notes/review state. See `supabase/migrations/` for the authoritative schema; `prep-files/ARCHITECTURE.md` has design rationale.
+
+## Deployment
+
+Deployed on Vercel. Push to the default branch deploys; set the environment variables above in the Vercel project settings.
