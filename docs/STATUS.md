@@ -7,17 +7,21 @@ Next.js 16 (App Router) + React 19, shipped as a PWA (Serwist service worker) ·
 **What's working / built:** (auto-inferred from code + commits — verify)
 - Teacher auth (Supabase email/password) and dashboard with assessment/session lists, date filters, shareable assessment links.
 - Student flow (no login): `read/[token]` → name entry → recording (MediaRecorder) → comprehension → done.
-- Scoring pipeline (`POST /api/score`): Deepgram ASR → deterministic alignment/error classification → WCPM, accuracy, percentile band → prosody (1–4) → error patterns → Claude teacher summary. Writes `sessions` + `session_events`.
+- Scoring pipeline (`POST /api/score`): Deepgram `nova-3` ASR with `filler_words: true` (captures hesitations) and passage-specific `keyterm` prompting (boosts proper nouns + challenging vocabulary) → deterministic alignment/error classification → WCPM, accuracy, percentile band → prosody (1–4) → error patterns → Claude teacher summary. Writes `sessions` + `session_events`.
 - Comprehension questions: generation (`/api/generate-questions`, `/api/passage-questions`), grading, and partial-credit scoring.
 - Teacher report (`report/[id]` + print view): synced transcript, waveform (click-to-seek), prosody gauges, error patterns, AI summary, teacher notes + review-status workflow.
 - Admin console + analytics; assessment templates; numbered students.
 - Audio served via `/api/audio/[id]`; one-off maintenance `scripts/` (backfill patterns/waveforms, prerequisite checks) run with `tsx`.
-- 14 ordered SQL migrations (`supabase/migrations/0001`–`0014`).
+- 15 ordered SQL migrations (`supabase/migrations/0001`–`0015`).
 - `npm run build` is expected to pass (ESLint config was fixed for the Vercel build per commit `815d1f5`) — not re-verified in this session.
 
 **In progress:** (auto-inferred from uncommitted working tree — verify)
 - Word-level teacher overrides: `app/api/event-override/`, `components/WordOverridePopover.tsx`, migration `0014_session_event_overrides.sql`.
-- Comprehension partial-credit + regrade: `app/api/comprehension/regrade/`, edits to `lib/scoring/comprehension.ts`, `lib/scoring/types.ts`, report components.
+- Comprehension improvements:
+  - AI grading now extracts `expected_answer` (correct answer from passage) and shows it alongside student answers in a 70/30 two-column layout.
+  - Grading prompt updated to accept equivalent representations ("4" = "four", etc.) and focus on understanding over exact wording.
+  - Re-grade button in report UI allows re-evaluating answers with updated AI prompt (`/api/comprehension/regrade`).
+  - Migration `0015_comprehension_expected_answer.sql` adds the column (needs `supabase db push`).
 - README + AGENTS.md were just rewritten to describe the real project (uncommitted).
 - Strategy-as-code enforcement wired up (uncommitted): CLAUDE.md auto-imports PRODUCT/ROADMAP/STATUS via `@`; a committed `.claude/settings.json` Stop hook reminds when code is staged without `docs/STATUS.md`. The hook needs a `/hooks` reload or restart to go live this session.
 
@@ -29,5 +33,6 @@ Next.js 16 (App Router) + React 19, shipped as a PWA (Serwist service worker) ·
 
 **Next concrete steps:**
 - Finish and commit the in-progress override + comprehension-regrade work.
+- **WER validation:** Build validation script to compare hand-scored WCPM vs app WCPM on 5-10 classroom recordings (AAVE, Spanglish, newcomer accents). Target: ±5 WCPM delta. ASR config now includes `filler_words` + `keyterm` prompting to improve accuracy.
 - Fill PRODUCT.md / ROADMAP.md strategy TODOs from the Project side.
 - Decide on a testing strategy for the deterministic scoring engine (`lib/scoring/`), the highest-value place for unit tests.

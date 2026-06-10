@@ -65,6 +65,7 @@ export interface ComprehensionAnswer {
   is_correct: boolean;           // Legacy: true if status is "correct"
   status: ComprehensionStatus;   // "correct" | "partial" | "incorrect"
   feedback: string;
+  expected_answer?: string;      // The correct answer or relevant passage excerpt
 }
 
 export interface ComprehensionResult {
@@ -90,4 +91,22 @@ export interface ScoredSession {
   avg_confidence: number;
   scoring_duration_seconds: number;
   created_at: Date;
+}
+
+// Event Override Types (for teacher word-level corrections)
+export type EventOverrideAction = 'flag_error' | 'approve' | 'reject';
+
+export interface SessionEventOverride {
+  id: string;
+  session_id: string;
+  word_index: number;
+  teacher_id: string;
+  action: EventOverrideAction;
+  original_event_type: EventType;
+  original_confidence: number | null;
+  new_event_type: EventType | null;
+  spoken_word_override: string | null;
+  reason: string | null;
+  created_at: string;
+  teacher?: { full_name: string };
 }

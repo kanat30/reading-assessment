@@ -10,19 +10,9 @@ async function gradeQuestion(
   question: ComprehensionQuestion,
   studentAnswer: string
 ): Promise<ComprehensionAnswer> {
-  if (!studentAnswer.trim()) {
-    return {
-      question_id: question.id,
-      student_answer: studentAnswer,
-      is_correct: false,
-      status: "incorrect",
-      feedback: "No answer provided.",
-    };
-  }
-
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-5",
-    max_tokens: 200,
+    max_tokens: 300,
     messages: [
       {
         role: "user",
@@ -33,20 +23,25 @@ Passage:
 
 Question (${question.type}): ${question.question}
 
-Student's Answer: "${studentAnswer}"
+Student's Answer: "${studentAnswer || "(no answer provided)"}"
 
 Grade this answer using THREE levels:
 - "correct": Answer demonstrates clear understanding and is accurate
 - "partial": Answer shows some understanding but is incomplete, uncertain, or only partly accurate (e.g., student says "maybe" or "I think", or names 2 of 3 things asked)
 - "incorrect": Answer is wrong, irrelevant, or shows no understanding
 
-For literal questions, check if the key information is present.
-For inferential questions, accept reasonable interpretations.
+IMPORTANT grading guidelines:
+- Accept equivalent representations: "4" = "four", "2nd" = "second", "NYC" = "New York City", etc.
+- Accept reasonable paraphrasing - students don't need to quote the text exactly
+- For literal questions, check if the key information is present (even if phrased differently)
+- For inferential questions, accept any reasonable interpretation supported by the text
+- Focus on whether the student understood the content, not on exact wording
 
 Respond in this exact JSON format:
 {
   "status": "correct" or "partial" or "incorrect",
-  "feedback": "brief encouraging feedback"
+  "feedback": "brief encouraging feedback",
+  "expected_answer": "the correct answer based on the passage (brief, 1-2 sentences max)"
 }
 
 JSON only, no other text.`,
@@ -76,6 +71,7 @@ JSON only, no other text.`,
     is_correct: status === "correct",
     status,
     feedback: parsed.feedback || "Graded.",
+    expected_answer: parsed.expected_answer || undefined,
   };
 }
 

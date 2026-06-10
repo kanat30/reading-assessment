@@ -13,7 +13,7 @@ import { TeacherNotesSection } from "./TeacherNotesSection";
 import { useCountUp } from "@/hooks/useCountUp";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useIntersectionObserver } from "@/hooks/useIntersectionObserver";
-import { SessionEvent, EnhancedErrorPattern } from "@/lib/scoring/types";
+import { SessionEvent, SessionEventOverride, EnhancedErrorPattern, EventType, EventOverrideAction } from "@/lib/scoring/types";
 import { SCORE_REVEAL } from "@/lib/animation/constants";
 
 interface SessionReportProps {
@@ -41,6 +41,7 @@ interface ComprehensionAnswer {
   is_correct: boolean | null;
   status: ComprehensionStatus | null;
   feedback: string | null;
+  expected_answer: string | null;
   passage_questions: {
     id: string;
     question: string;
@@ -108,6 +109,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [comprehensionAnswers, setComprehensionAnswers] = useState<ComprehensionAnswer[]>([]);
   const [overrides, setOverrides] = useState<Override[]>([]);
+  const [eventOverrides, setEventOverrides] = useState<SessionEventOverride[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,6 +118,9 @@ export function SessionReport({ sessionId }: SessionReportProps) {
   const [overrideDimension, setOverrideDimension] = useState<string | undefined>();
   const [overrideCurrentValue, setOverrideCurrentValue] = useState<unknown>(null);
   const [showHistory, setShowHistory] = useState(false);
+
+  // Comprehension regrade state
+  const [regrading, setRegrading] = useState(false);
 
   // Animation triggers - default to true if data is loaded (fixes accordion/panel visibility)
   const [reportRef, isIntersecting] = useIntersectionObserver<HTMLDivElement>({ threshold: 0.1 });
@@ -180,6 +185,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             is_correct,
             status,
             feedback,
+            expected_answer,
             passage_questions(id, question, question_type, display_order)
           `)
           .eq("session_id", sessionId)
@@ -199,6 +205,26 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           `)
           .eq("session_id", sessionId)
           .order("created_at", { ascending: false });
+
+        // Fetch event overrides (word-level)
+        const { data: eventOverrideRows } = await supabase
+          .from("session_event_overrides")
+          .select(`
+            id,
+            session_id,
+            word_index,
+            teacher_id,
+            action,
+            original_event_type,
+            original_confidence,
+            new_event_type,
+            spoken_word_override,
+            reason,
+            created_at,
+            teachers(full_name)
+          `)
+          .eq("session_id", sessionId)
+          .order("word_index", { ascending: true });
 
         // Transform data
         const transformedSession = {
@@ -223,6 +249,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         setEvents(transformedEvents);
         setComprehensionAnswers((comprehensionRows || []) as unknown as ComprehensionAnswer[]);
         setOverrides((overrideRows || []) as unknown as Override[]);
+        setEventOverrides((eventOverrideRows || []) as unknown as SessionEventOverride[]);
       } catch (err) {
         setError("Failed to load report");
         console.error(err);
@@ -336,6 +363,202 @@ export function SessionReport({ sessionId }: SessionReportProps) {
     const currentLevel = session.scores_json.prosody.level;
     handleOpenOverride("prosody", currentLevel, dimension);
   }, [session, handleOpenOverride]);
+
+  // Handle event override save (word-level)
+  const handleEventOverrideSave = useCallback(async (
+    wordIndex: number,
+    data: {
+      action: EventOverrideAction;
+      original_event_type: EventType;
+      original_confidence?: number | null;
+      new_event_type?: EventType;
+      spoken_word_override?: string;
+      reason?: string;
+    }
+  ) => {
+    try {
+      const response = await fetch("/api/event-override", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          word_index: wordIndex,
+          ...data,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to save event override");
+      }
+
+      const result = await response.json();
+
+      // Refresh event overrides
+      const { data: eventOverrideRows } = await supabase
+        .from("session_event_overrides")
+        .select(`
+          id,
+          session_id,
+          word_index,
+          teacher_id,
+          action,
+          original_event_type,
+          original_confidence,
+          new_event_type,
+          spoken_word_override,
+          reason,
+          created_at,
+          teachers(full_name)
+        `)
+        .eq("session_id", sessionId)
+        .order("word_index", { ascending: true });
+
+      setEventOverrides((eventOverrideRows || []) as unknown as SessionEventOverride[]);
+
+      // Update session with new metrics if returned
+      if (result.metrics) {
+        const { data: updatedSession } = await supabase
+          .from("sessions")
+          .select(`
+            id, status, created_at, duration_seconds, scores_json, teacher_review_status,
+            students(first_name, last_name),
+            assessments(passages(id, title, text, grade_band))
+          `)
+          .eq("id", sessionId)
+          .single();
+
+        if (updatedSession) {
+          setSession({
+            ...updatedSession,
+            students: updatedSession.students as unknown as StudentData,
+            assessments: updatedSession.assessments as unknown as { passages: PassageData },
+            scores_json: updatedSession.scores_json as ScoresJson,
+            teacher_review_status: updatedSession.teacher_review_status || "unreviewed",
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Event override save error:", err);
+      throw err;
+    }
+  }, [sessionId, supabase]);
+
+  // Handle event override delete (word-level)
+  const handleEventOverrideDelete = useCallback(async (wordIndex: number) => {
+    try {
+      const response = await fetch(`/api/event-override?session_id=${sessionId}&word_index=${wordIndex}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to delete event override");
+      }
+
+      // Refresh event overrides
+      const { data: eventOverrideRows } = await supabase
+        .from("session_event_overrides")
+        .select(`
+          id,
+          session_id,
+          word_index,
+          teacher_id,
+          action,
+          original_event_type,
+          original_confidence,
+          new_event_type,
+          spoken_word_override,
+          reason,
+          created_at,
+          teachers(full_name)
+        `)
+        .eq("session_id", sessionId)
+        .order("word_index", { ascending: true });
+
+      setEventOverrides((eventOverrideRows || []) as unknown as SessionEventOverride[]);
+
+      // Refresh session to get updated metrics
+      const { data: updatedSession } = await supabase
+        .from("sessions")
+        .select(`
+          id, status, created_at, duration_seconds, scores_json, teacher_review_status,
+          students(first_name, last_name),
+          assessments(passages(id, title, text, grade_band))
+        `)
+        .eq("id", sessionId)
+        .single();
+
+      if (updatedSession) {
+        setSession({
+          ...updatedSession,
+          students: updatedSession.students as unknown as StudentData,
+          assessments: updatedSession.assessments as unknown as { passages: PassageData },
+          scores_json: updatedSession.scores_json as ScoresJson,
+          teacher_review_status: updatedSession.teacher_review_status || "unreviewed",
+        });
+      }
+    } catch (err) {
+      console.error("Event override delete error:", err);
+      throw err;
+    }
+  }, [sessionId, supabase]);
+
+  // Re-grade comprehension answers with updated AI prompt
+  const handleRegradeComprehension = useCallback(async () => {
+    setRegrading(true);
+    try {
+      const response = await fetch("/api/comprehension/regrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to regrade");
+      }
+
+      // Refetch comprehension answers with updated grades
+      const { data: comprehensionRows } = await supabase
+        .from("comprehension_answers")
+        .select(`
+          id,
+          question_id,
+          student_answer,
+          is_correct,
+          status,
+          feedback,
+          expected_answer,
+          passage_questions(id, question, question_type, display_order)
+        `)
+        .eq("session_id", sessionId)
+        .order("passage_questions(display_order)", { ascending: true });
+
+      if (comprehensionRows) {
+        setComprehensionAnswers(comprehensionRows as unknown as ComprehensionAnswer[]);
+      }
+
+      // Refetch session to get updated scores_json
+      const { data: updatedSession } = await supabase
+        .from("sessions")
+        .select("scores_json")
+        .eq("id", sessionId)
+        .single();
+
+      if (updatedSession && session) {
+        setSession({
+          ...session,
+          scores_json: updatedSession.scores_json as ScoresJson,
+        });
+      }
+    } catch (err) {
+      console.error("Regrade error:", err);
+      alert(err instanceof Error ? err.message : "Failed to regrade comprehension");
+    } finally {
+      setRegrading(false);
+    }
+  }, [sessionId, supabase, session]);
 
   // Loading state - use skeleton
   if (loading) {
@@ -550,11 +773,14 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             sessionId={sessionId}
             passageText={passage.text}
             events={events}
+            eventOverrides={eventOverrides}
             metrics={metrics}
             durationSeconds={duration_seconds}
             errorCounts={{ errors: substitutions + omissions, mispronunciations, selfCorrections }}
             isVisible={isReportVisible}
             onProsodyDotClick={handleProsodyDotClick}
+            onEventOverrideSave={handleEventOverrideSave}
+            onEventOverrideDelete={handleEventOverrideDelete}
           />
         </div>
       </div>
@@ -566,7 +792,15 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             <h3 className="text-sm font-medium text-ink uppercase tracking-wide">
               Comprehension
             </h3>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleRegradeComprehension}
+                disabled={regrading}
+                className="text-xs text-stone hover:text-ink transition-colors disabled:opacity-50"
+                title="Re-evaluate answers with updated AI grading"
+              >
+                {regrading ? "Re-grading..." : "Re-grade"}
+              </button>
               <span className="text-sm font-medium text-ink">
                 {comprehension?.score || 0}/{comprehension?.total || comprehensionAnswers.length}
               </span>
@@ -608,10 +842,28 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                         {answer.status === "correct" ? "Correct" : answer.status === "partial" ? "Partial" : "Incorrect"}
                       </span>
                     </div>
-                    <p className="text-sm font-medium text-ink mb-2">{question.question}</p>
-                    <p className="text-sm text-stone">
-                      {answer.student_answer || "No answer provided"}
-                    </p>
+                    <p className="text-sm font-medium text-ink mb-3">{question.question}</p>
+
+                    {/* Two-column layout: student answer (left) + expected answer (right) */}
+                    <div className="flex gap-4">
+                      {/* Student answer - 70% */}
+                      <div className="flex-[7]">
+                        <p className="text-xs text-stone mb-1">Student&apos;s answer</p>
+                        <p className="text-sm text-ink">
+                          {answer.student_answer || "No answer provided"}
+                        </p>
+                      </div>
+
+                      {/* Expected answer - 30% */}
+                      {answer.expected_answer && (
+                        <div className="flex-[3] pl-4 border-l border-mist/40">
+                          <p className="text-xs text-stone mb-1">Expected</p>
+                          <p className="text-sm text-ink/70 italic">
+                            {answer.expected_answer}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}

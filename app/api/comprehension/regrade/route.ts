@@ -14,14 +14,11 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { session_id, answers } = body as {
-      session_id: string;
-      answers: Record<string, string>; // question_id -> student_answer
-    };
+    const { session_id } = body as { session_id: string };
 
-    if (!session_id || !answers) {
+    if (!session_id) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: "Missing session_id" },
         { status: 400 }
       );
     }
@@ -51,8 +48,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Extract passage from nested relations (Supabase returns single objects for FK relations
-    // but TypeScript infers arrays - cast through unknown to handle this)
     const assessments = session.assessments as unknown as { passage_id: string; passages: PassageData } | null;
     const passage = assessments?.passages;
     if (!passage) {
@@ -60,6 +55,25 @@ export async function POST(request: NextRequest) {
         { error: "Passage not found" },
         { status: 404 }
       );
+    }
+
+    // Get existing comprehension answers for this session
+    const { data: existingAnswers, error: answersError } = await supabase
+      .from("comprehension_answers")
+      .select("question_id, student_answer")
+      .eq("session_id", session_id);
+
+    if (answersError || !existingAnswers || existingAnswers.length === 0) {
+      return NextResponse.json(
+        { error: "No comprehension answers found for this session" },
+        { status: 404 }
+      );
+    }
+
+    // Convert to answers record
+    const answers: Record<string, string> = {};
+    for (const a of existingAnswers) {
+      answers[a.question_id] = a.student_answer;
     }
 
     // Get questions for this passage
@@ -76,42 +90,38 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Convert to ComprehensionQuestion format for grading
     const questions: ComprehensionQuestion[] = questionRows.map((q) => ({
       id: q.id,
       question: q.question,
       type: q.question_type as "literal" | "inferential",
     }));
 
-    // Grade comprehension using Claude (with fallback)
+    // Re-grade comprehension using Claude with updated prompt
     const result = await gradeComprehension(
       passage.text,
       questions,
       answers
     );
 
-    // Store answers in database
+    // Update answers in database with new grades
     for (const answer of result.answers) {
-      const { error: insertError } = await supabase
+      const { error: updateError } = await supabase
         .from("comprehension_answers")
-        .upsert({
-          session_id: session_id,
-          question_id: answer.question_id,
-          student_answer: answer.student_answer,
+        .update({
           is_correct: answer.is_correct,
           status: answer.status,
           feedback: answer.feedback,
           expected_answer: answer.expected_answer,
-        }, {
-          onConflict: "session_id,question_id"
-        });
+        })
+        .eq("session_id", session_id)
+        .eq("question_id", answer.question_id);
 
-      if (insertError) {
-        console.error("Error storing answer:", insertError);
+      if (updateError) {
+        console.error("Error updating answer:", updateError);
       }
     }
 
-    // Update session's scores_json to include comprehension
+    // Update session's scores_json with new comprehension score
     const { data: currentSession } = await supabase
       .from("sessions")
       .select("scores_json")
@@ -132,15 +142,17 @@ export async function POST(request: NextRequest) {
       .eq("id", session_id);
 
     return NextResponse.json({
+      success: true,
+      session_id,
       score: result.score,
       total: result.total,
       answers: result.answers,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Comprehension API error:", errorMessage, error);
+    console.error("Comprehension regrade error:", errorMessage, error);
     return NextResponse.json(
-      { error: `Failed to grade comprehension: ${errorMessage}` },
+      { error: `Failed to regrade comprehension: ${errorMessage}` },
       { status: 500 }
     );
   }
