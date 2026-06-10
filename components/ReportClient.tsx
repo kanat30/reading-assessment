@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { SyncedTranscript } from "./SyncedTranscript";
 import { ProsodyGauges } from "./ProsodyGauges";
 import { AIBadge } from "./AIBadge";
-import { SessionEvent, ScoringMetrics } from "@/lib/scoring/types";
+import { SessionEvent, SessionEventOverride, ScoringMetrics, EventType, EventOverrideAction } from "@/lib/scoring/types";
 
 // Dynamic import for ReportWaveform (heavy WaveSurfer dependency)
 const ReportWaveform = dynamic(() => import("./ReportWaveform").then(m => ({ default: m.ReportWaveform })), {
@@ -17,11 +17,24 @@ interface ReportClientProps {
   sessionId: string;
   passageText: string;
   events: SessionEvent[];
+  eventOverrides?: SessionEventOverride[];
   metrics: ScoringMetrics;
   durationSeconds: number;
   errorCounts: { errors: number; mispronunciations: number; selfCorrections: number };
   isVisible?: boolean;
   onProsodyDotClick?: (dimension: string, level: number) => void;
+  onEventOverrideSave?: (
+    wordIndex: number,
+    data: {
+      action: EventOverrideAction;
+      original_event_type: EventType;
+      original_confidence?: number | null;
+      new_event_type?: EventType;
+      spoken_word_override?: string;
+      reason?: string;
+    }
+  ) => Promise<void>;
+  onEventOverrideDelete?: (wordIndex: number) => Promise<void>;
 }
 
 /**
@@ -38,11 +51,14 @@ export function ReportClient({
   sessionId,
   passageText,
   events,
+  eventOverrides = [],
   metrics,
   durationSeconds,
   errorCounts,
   isVisible = true,
   onProsodyDotClick,
+  onEventOverrideSave,
+  onEventOverrideDelete,
 }: ReportClientProps) {
   const [currentTime, setCurrentTime] = useState(0);
   const [seekRequest, setSeekRequest] = useState<SeekRequest | null>(null);
@@ -116,13 +132,24 @@ export function ReportClient({
               Hesitation {(errorCounts.mispronunciations + errorCounts.selfCorrections) > 0 && `(${errorCounts.mispronunciations + errorCounts.selfCorrections})`}
             </span>
           </div>
+          {eventOverrides.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-ink border-b-2 border-solid border-accent-blue">word</span>
+              <span className="text-stone">
+                Teacher override ({eventOverrides.length})
+              </span>
+            </div>
+          )}
         </div>
 
         <SyncedTranscript
           passageText={passageText}
           events={events}
           currentTime={currentTime}
+          overrides={eventOverrides}
           onWordClick={handleWordClick}
+          onOverrideSave={onEventOverrideSave}
+          onOverrideDelete={onEventOverrideDelete}
         />
       </div>
     </div>
