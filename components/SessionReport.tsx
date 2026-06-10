@@ -857,9 +857,9 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                       {/* Expected answer - 30% */}
                       {answer.expected_answer && (
                         <div className="flex-[3] pl-4 border-l border-mist/40">
-                          <p className="text-xs text-stone mb-1">Expected</p>
+                          <p className="text-xs text-stone mb-1">From text</p>
                           <p className="text-sm text-ink/70 italic">
-                            {answer.expected_answer}
+                            &ldquo;{answer.expected_answer}&rdquo;
                           </p>
                         </div>
                       )}

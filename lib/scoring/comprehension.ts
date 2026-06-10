@@ -41,7 +41,7 @@ Respond in this exact JSON format:
 {
   "status": "correct" or "partial" or "incorrect",
   "feedback": "brief encouraging feedback",
-  "expected_answer": "the correct answer based on the passage (brief, 1-2 sentences max)"
+  "expected_answer": "EXACT QUOTE from the passage that answers the question (copy word-for-word, use ellipsis ... to shorten if needed)"
 }
 
 JSON only, no other text.`,
