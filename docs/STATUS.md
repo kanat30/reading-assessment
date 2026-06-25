@@ -22,6 +22,7 @@ Next.js 16 (App Router) + React 19, shipped as a PWA (Serwist service worker) ·
   - Grading prompt updated to accept equivalent representations ("4" = "four", etc.) and focus on understanding over exact wording.
   - Re-grade button in report UI allows re-evaluating answers with updated AI prompt (`/api/comprehension/regrade`).
   - Migration `0015_comprehension_expected_answer.sql` adds the column (needs `supabase db push`).
+- Dashboard readings list refreshed (uncommitted): defaults to the current-week window instead of all-time, shows a `N this week · M new` count beside the headline, tighter row density, a "View all N readings →" link (and empty-window state) to reveal older readings, and the old always-on Quick Tips sidebar collapsed into a header info popover so the list runs full-width.
 - README + AGENTS.md were just rewritten to describe the real project (uncommitted).
 - Strategy-as-code enforcement wired up (uncommitted): CLAUDE.md auto-imports PRODUCT/ROADMAP/STATUS via `@`; a committed `.claude/settings.json` Stop hook reminds when code is staged without `docs/STATUS.md`. The hook needs a `/hooks` reload or restart to go live this session.
 

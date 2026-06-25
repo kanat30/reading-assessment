@@ -8,6 +8,8 @@ import { BreathingDot } from "@/components/BreathingDot";
 import { UploadProgress } from "@/lib/audio/upload";
 import { playTick, playError } from "@/lib/audio/sounds";
 import { createClient } from "@/lib/supabase/browser";
+import { getPassageById, Passage as LibraryPassage } from "@/lib/passages/library";
+import { ProgressIndicator } from "@/components/student";
 
 type RecordingState =
   | "loading"
@@ -22,7 +24,7 @@ type RecordingState =
   | "offline"
   | "error";
 
-interface Passage {
+interface DatabasePassage {
   id: string;
   title: string;
   text: string;
@@ -30,12 +32,26 @@ interface Passage {
   word_count: number;
 }
 
+// Unified passage interface for display
+interface DisplayPassage {
+  id: string;
+  title: string;
+  text: string;
+  word_count: number;
+}
+
 interface Assessment {
   id: string;
   class_label: string;
   share_token: string;
-  passages: Passage;
+  passages: DatabasePassage | null; // Legacy database passage
+  // New library passage fields
+  passage_ids?: string[];
+  reading_level?: number;
 }
+
+// Session storage key for passage index in multi-passage flow
+const PASSAGE_INDEX_KEY = "fs:passage-index";
 
 interface RecordingPageProps {
   params: Promise<{ token: string }>;
@@ -58,6 +74,11 @@ function RecordingContent({ token }: { token: string }) {
   );
   const [audioLevel, setAudioLevel] = useState(0);
   const [hasDetectedAudio, setHasDetectedAudio] = useState(false);
+
+  // Multi-passage support
+  const [currentPassageIndex, setCurrentPassageIndex] = useState(0);
+  const [currentPassage, setCurrentPassage] = useState<DisplayPassage | null>(null);
+  const [totalPassages, setTotalPassages] = useState(1);
 
   // Audio recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -197,10 +218,15 @@ function RecordingContent({ token }: { token: string }) {
       }
       setStudentName(savedName);
 
-      // Fetch assessment
+      // Get passage index from session storage (for multi-passage flow)
+      const savedIndex = sessionStorage.getItem(PASSAGE_INDEX_KEY);
+      const passageIndex = savedIndex ? parseInt(savedIndex, 10) : 0;
+      setCurrentPassageIndex(passageIndex);
+
+      // Fetch assessment with both legacy and new fields
       const { data, error } = await supabase
         .from("assessments")
-        .select("*, passages(*)")
+        .select("*, passages(*), passage_ids, reading_level")
         .eq("share_token", token)
         .single();
 
@@ -216,6 +242,38 @@ function RecordingContent({ token }: { token: string }) {
       }
 
       setAssessment(data);
+
+      // Determine which passage to use
+      if (data.passage_ids && data.passage_ids.length > 0) {
+        // New library passage flow
+        setTotalPassages(data.passage_ids.length);
+        const passageId = data.passage_ids[passageIndex];
+        const libraryPassage = getPassageById(passageId);
+        if (libraryPassage) {
+          setCurrentPassage({
+            id: libraryPassage.id,
+            title: libraryPassage.title,
+            text: libraryPassage.text,
+            word_count: libraryPassage.word_count,
+          });
+        } else {
+          setState("not-found");
+          return;
+        }
+      } else if (data.passages) {
+        // Legacy database passage flow
+        setTotalPassages(1);
+        setCurrentPassage({
+          id: data.passages.id,
+          title: data.passages.title,
+          text: data.passages.text,
+          word_count: data.passages.word_count,
+        });
+      } else {
+        setState("not-found");
+        return;
+      }
+
       // Request mic access immediately - this triggers browser permission prompt
       acquireMicrophone();
     }
@@ -435,6 +493,12 @@ function RecordingContent({ token }: { token: string }) {
       formData.append("student_name", studentName);
       formData.append("duration_seconds", durationSeconds.toString());
 
+      // Add passage tracking for multi-passage and library passage support
+      if (currentPassage) {
+        formData.append("passage_id", currentPassage.id);
+        formData.append("passage_index", currentPassageIndex.toString());
+      }
+
       const response = await fetch("/api/score", {
         method: "POST",
         body: formData,
@@ -448,7 +512,14 @@ function RecordingContent({ token }: { token: string }) {
 
       setUploadProgress({ status: "success", attempt: 1, maxAttempts: 3, message: "Done!" });
       playTick();
-      router.push(`/read/${token}/comprehension?s=${session_id}`);
+
+      // Navigate to comprehension with passage tracking info
+      const searchParams = new URLSearchParams({
+        s: session_id,
+        pi: currentPassageIndex.toString(),
+        tp: totalPassages.toString(),
+      });
+      router.push(`/read/${token}/comprehension?${searchParams.toString()}`);
       return;
     } catch (err) {
       console.error("Upload error:", err);
@@ -563,7 +634,8 @@ function RecordingContent({ token }: { token: string }) {
     );
   }
 
-  const passage = assessment?.passages;
+  // Use currentPassage which handles both library and database passages
+  const passage = currentPassage;
 
   return (
     <div className="min-h-screen bg-paper flex flex-col">
@@ -602,20 +674,32 @@ function RecordingContent({ token }: { token: string }) {
 
       {/* Flow progress indicator */}
       <div className="pt-10 px-6">
-        <div className="max-w-[680px] mx-auto flex items-center justify-center gap-3 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-success" />
-            <span className="text-stone">Name</span>
-          </div>
-          <span className="text-mist">─</span>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-accent-blue" />
-            <span className="text-ink font-medium">Reading</span>
-          </div>
-          <span className="text-mist">─</span>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-mist" />
-            <span className="text-stone">Questions</span>
+        <div className="max-w-[680px] mx-auto">
+          {/* Multi-passage progress indicator */}
+          {totalPassages > 1 && (
+            <div className="flex justify-center mb-4">
+              <ProgressIndicator
+                currentPassage={currentPassageIndex}
+                totalPassages={totalPassages}
+              />
+            </div>
+          )}
+
+          <div className="flex items-center justify-center gap-3 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-success" />
+              <span className="text-stone">Name</span>
+            </div>
+            <span className="text-mist">─</span>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-accent-blue" />
+              <span className="text-ink font-medium">Reading</span>
+            </div>
+            <span className="text-mist">─</span>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-mist" />
+              <span className="text-stone">Questions</span>
+            </div>
           </div>
         </div>
       </div>

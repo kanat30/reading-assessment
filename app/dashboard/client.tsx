@@ -12,6 +12,14 @@ import { formatContextualTime } from "@/lib/format/time";
 import { QuickActionsMenu, StatusDot, ReviewStatus } from "@/components/QuickActionsMenu";
 import { NotePanel } from "@/components/NotePanel";
 import { ReviewPromptModal } from "@/components/ReviewPromptModal";
+import { ReadingLevelSelector, PassageCountSelector, PassageSelector } from "@/components/assessment";
+import {
+  ReadingLevel,
+  Passage as LibraryPassage,
+  getPassageById,
+  detectAssessmentPeriod,
+  getAssessmentPeriodLabel,
+} from "@/lib/passages/library";
 
 // Dynamic import for SessionReport with skeleton loading
 const SessionReport = dynamic(() => import("@/components/SessionReport").then(m => ({ default: m.SessionReport })), {
@@ -132,7 +140,9 @@ interface DashboardClientProps {
   activeAssessments: ActiveAssessment[];
 }
 
-type CreateStep = "closed" | "choose" | "passage" | "questions" | "label" | "done";
+// "passage" and "questions" are for legacy template flow; "level", "count", "passages" are for new library flow
+type CreateStep = "closed" | "choose" | "level" | "count" | "passages" | "passage" | "questions" | "label" | "done";
+type PassageCount = 1 | 3;
 type ExpirationDuration = "none" | "1h" | "1d" | "1w" | "1m";
 
 export function DashboardClient({
@@ -146,8 +156,11 @@ export function DashboardClient({
 }: DashboardClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeFilter = searchParams.get("class") || "all";
-  const activeDateFilter = searchParams.get("date") || "all";
+
+  // Local state for filters — initialized from URL for refresh support, but updated
+  // instantly without router.push() to avoid full server re-renders.
+  const [activeFilter, setActiveFilter] = useState(searchParams.get("class") || "all");
+  const [activeDateFilter, setActiveDateFilter] = useState(searchParams.get("date") || "week");
 
   const [sessions, setSessions] = useState(initialSessions);
   const [classLabels, setClassLabels] = useState(initialClassLabels);
@@ -161,6 +174,12 @@ export function DashboardClient({
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+
+  // New passage library state
+  const [selectedReadingLevel, setSelectedReadingLevel] = useState<ReadingLevel | null>(null);
+  const [passageCount, setPassageCount] = useState<PassageCount>(3);
+  const [selectedPassageIds, setSelectedPassageIds] = useState<string[]>([]);
+  const assessmentPeriod = detectAssessmentPeriod();
 
   // Question management state
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -202,6 +221,12 @@ export function DashboardClient({
   // Class filter dropdown state
   const [showClassDropdown, setShowClassDropdown] = useState(false);
 
+  // Quick-tips popover (replaces the always-on sidebar)
+  const [showTips, setShowTips] = useState(false);
+
+  // "New assessment" — templates collapsed below the leveled library by default
+  const [showChooseTemplates, setShowChooseTemplates] = useState(false);
+
   // Numbered students state
   const [useNumberedStudents, setUseNumberedStudents] = useState(false);
   const [expectedStudentCount, setExpectedStudentCount] = useState(20);
@@ -239,7 +264,8 @@ export function DashboardClient({
     });
   };
 
-  const filteredSessions = filterSessionsByDate(
+  // Apply class + status + notes filters first — everything *except* the date window.
+  const scopedSessions = (
     activeFilter === "all"
       ? sessions
       : sessions.filter(
@@ -259,14 +285,31 @@ export function DashboardClient({
     return true;
   });
 
+  // Then apply the date window — this is what the "view all" link reveals.
+  const filteredSessions = filterSessionsByDate(scopedSessions);
+  const hiddenByDate = scopedSessions.length - filteredSessions.length;
+  const newCount = filteredSessions.filter(
+    (s) => s.teacher_review_status === "new"
+  ).length;
+  const scopeLabel =
+    activeDateFilter === "today"
+      ? "today"
+      : activeDateFilter === "week"
+      ? "this week"
+      : "in total";
+
   // Handle class filter change (preserves date filter)
+  // Uses local state + history.replaceState() for instant updates without server round-trip.
   const handleFilterChange = (label: string) => {
     const slug = label === "all" ? "all" : label.toLowerCase().replace(/\s+/g, "-");
+    setActiveFilter(slug);
+
+    // Sync URL for bookmarks/refresh, but don't trigger navigation
     const params = new URLSearchParams();
     if (slug !== "all") params.set("class", slug);
     if (activeDateFilter !== "all") params.set("date", activeDateFilter);
     const query = params.toString();
-    router.push(query ? `/dashboard?${query}` : "/dashboard", { scroll: false });
+    window.history.replaceState(null, "", query ? `/dashboard?${query}` : "/dashboard");
     setShowClassDropdown(false);
   };
 
@@ -280,12 +323,16 @@ export function DashboardClient({
   };
 
   // Handle date filter change (preserves class filter)
+  // Uses local state + history.replaceState() for instant updates without server round-trip.
   const handleDateFilterChange = (dateFilter: string) => {
+    setActiveDateFilter(dateFilter);
+
+    // Sync URL for bookmarks/refresh, but don't trigger navigation
     const params = new URLSearchParams();
     if (activeFilter !== "all") params.set("class", activeFilter);
     if (dateFilter !== "all") params.set("date", dateFilter);
     const query = params.toString();
-    router.push(query ? `/dashboard?${query}` : "/dashboard", { scroll: false });
+    window.history.replaceState(null, "", query ? `/dashboard?${query}` : "/dashboard");
   };
 
   // Handle row click (expand/collapse)
@@ -400,7 +447,8 @@ export function DashboardClient({
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (showClassDropdown) setShowClassDropdown(false);
+        if (showTips) setShowTips(false);
+        else if (showClassDropdown) setShowClassDropdown(false);
         else if (expandedSessionId) setExpandedSessionId(null);
       }
     };
@@ -409,6 +457,9 @@ export function DashboardClient({
       if (showClassDropdown && !target.closest("[data-class-dropdown]")) {
         setShowClassDropdown(false);
       }
+      if (showTips && !target.closest("[data-tips]")) {
+        setShowTips(false);
+      }
     };
     window.addEventListener("keydown", handleEscape);
     window.addEventListener("mousedown", handleClickOutside);
@@ -416,7 +467,7 @@ export function DashboardClient({
       window.removeEventListener("keydown", handleEscape);
       window.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [expandedSessionId, showClassDropdown]);
+  }, [expandedSessionId, showClassDropdown, showTips]);
 
   // Realtime subscription for new sessions
   // Falls back to polling if Realtime is unreliable in Vercel serverless
@@ -629,7 +680,11 @@ export function DashboardClient({
   };
 
   const handleCreateAssessment = async () => {
-    if (!selectedPassage || !classLabel.trim()) return;
+    // Support both new flow (passage library) and legacy flow (database passages)
+    const usingLibrary = selectedPassageIds.length > 0 && selectedReadingLevel !== null;
+    const usingLegacy = selectedPassage !== null;
+
+    if ((!usingLibrary && !usingLegacy) || !classLabel.trim()) return;
 
     setIsCreating(true);
     const shareToken = nanoid(16);
@@ -637,18 +692,30 @@ export function DashboardClient({
     // Build insert object - only include optional fields if they have values
     const expiresAt = calculateExpiresAt(expirationDuration);
 
+    // Get first passage info for display (legacy compatibility)
+    const firstPassageId = usingLibrary ? selectedPassageIds[0] : selectedPassage?.id;
+    const firstPassage = usingLibrary ? getPassageById(selectedPassageIds[0]) : null;
+
     const { error } = await supabase
       .from("assessments")
       .insert({
         school_id: school.id,
         teacher_id: teacher.id,
-        passage_id: selectedPassage.id,
+        // For legacy compatibility, use first passage as passage_id
+        // New system will use passage_ids array
+        passage_id: usingLegacy ? selectedPassage!.id : null,
         class_label: classLabel.trim(),
         share_token: shareToken,
         mode: "screening",
         ...(expiresAt && { expires_at: expiresAt }),
         use_numbered_students: useNumberedStudents,
         ...(useNumberedStudents && { expected_student_count: expectedStudentCount }),
+        // New passage library fields
+        ...(usingLibrary && {
+          reading_level: selectedReadingLevel,
+          passage_ids: selectedPassageIds,
+          assessment_period: assessmentPeriod,
+        }),
       })
       .select()
       .single();
@@ -667,6 +734,13 @@ export function DashboardClient({
     }
 
     // Add new assessment to active assessments list
+    const displayTitle = usingLibrary
+      ? `${firstPassage?.title || "Passage"} ${selectedPassageIds.length > 1 ? `+${selectedPassageIds.length - 1}` : ""}`
+      : selectedPassage!.title;
+    const displayGradeBand = usingLibrary
+      ? `Level ${selectedReadingLevel}`
+      : selectedPassage!.grade_band;
+
     const newAssessment: ActiveAssessment = {
       id: crypto.randomUUID(), // Temporary ID, will be refreshed on next page load
       share_token: shareToken,
@@ -676,9 +750,9 @@ export function DashboardClient({
       use_numbered_students: useNumberedStudents,
       expected_student_count: useNumberedStudents ? expectedStudentCount : null,
       passages: {
-        id: selectedPassage.id,
-        title: selectedPassage.title,
-        grade_band: selectedPassage.grade_band,
+        id: firstPassageId || "",
+        title: displayTitle,
+        grade_band: displayGradeBand,
       },
     };
     setActiveAssessments((prev) => [newAssessment, ...prev]);
@@ -737,6 +811,10 @@ export function DashboardClient({
     setExpirationDuration("none");
     setUseNumberedStudents(false);
     setExpectedStudentCount(20);
+    // Reset new passage library state
+    setSelectedReadingLevel(null);
+    setPassageCount(3);
+    setSelectedPassageIds([]);
   };
 
   // Handle template selection - pre-fills passage and questions
@@ -1009,17 +1087,62 @@ export function DashboardClient({
               <p className="text-stone mb-1">
                 Welcome back, {teacher.full_name?.split(" ")[0] || "Teacher"}
               </p>
-              <h1 className="font-serif text-[32px] font-semibold text-ink">
-                Readings
-              </h1>
+              <div className="flex items-baseline gap-3">
+                <h1 className="font-serif text-[32px] font-semibold text-ink">
+                  Readings
+                </h1>
+                {filteredSessions.length > 0 && (
+                  <span className="text-sm text-stone">
+                    {filteredSessions.length} {scopeLabel}
+                    {newCount > 0 && (
+                      <>
+                        {" · "}
+                        <span className="text-accent-blue font-medium">
+                          {newCount} new
+                        </span>
+                      </>
+                    )}
+                  </span>
+                )}
+
+                {/* Quick-tips info popover (replaces the always-on sidebar) */}
+                <div className="relative ml-auto self-center" data-tips>
+                  <button
+                    onClick={() => setShowTips((v) => !v)}
+                    className="p-1.5 rounded-lg text-stone hover:text-ink hover:bg-mist/50 transition-colors"
+                    title="Tips"
+                    aria-label="Tips"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+                    </svg>
+                  </button>
+                  <AnimatePresence>
+                    {showTips && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute top-full right-0 mt-2 w-64 bg-paper border border-mist rounded-xl shadow-lg z-30 p-4"
+                      >
+                        <p className="font-medium text-ink text-xs uppercase tracking-wide mb-3">
+                          Quick tips
+                        </p>
+                        <ul className="text-sm text-stone space-y-2">
+                          <li>Click a row to see the full report</li>
+                          <li>Filter by class, date, or status above</li>
+                          <li>New readings appear automatically</li>
+                        </ul>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
             </div>
 
-            {/* Two-column: filters + readings list + quick tips */}
-            <div className={`grid gap-8 items-start ${
-              expandedSessionId
-                ? "grid-cols-1"
-                : "grid-cols-1 lg:grid-cols-[1fr_200px]"
-            }`}>
+            {/* Single-column readings list (full width — tips moved to header popover) */}
+            <div className="grid grid-cols-1">
               {/* Left column: Filters + Sessions */}
               <div>
                 {/* Filters row */}
@@ -1229,7 +1352,7 @@ export function DashboardClient({
                         onClick={() => !isProcessing && handleRowClick(session.id)}
                         onMouseEnter={() => setHoveredRowId(session.id)}
                         onMouseLeave={() => setHoveredRowId(null)}
-                        className={`px-4 py-3 rounded-lg transition-all duration-150 ${
+                        className={`px-4 py-2.5 rounded-lg transition-all duration-150 ${
                           isExpanded
                             ? "bg-mist/70 ring-1 ring-mist"
                             : hoveredRowId === session.id
@@ -1345,19 +1468,38 @@ export function DashboardClient({
                 })}
               </AnimatePresence>
                 </div>
-              </div>
 
-              {/* Quick tips sidebar - hidden when report is expanded */}
-              {!expandedSessionId && (
-                <div className="hidden lg:block">
-                  <div className="sticky top-8 text-sm text-stone space-y-2 border border-mist/60 rounded-lg p-4 bg-paper">
-                    <p className="font-medium text-ink text-xs uppercase tracking-wide mb-3">Quick tips</p>
-                    <p>Click a row to see the full report</p>
-                    <p>Filter by class or date above</p>
-                    <p>New readings appear automatically</p>
+                {/* View-all footer when the date window is hiding older readings */}
+                {filteredSessions.length > 0 &&
+                  hiddenByDate > 0 &&
+                  activeDateFilter !== "all" && (
+                    <div className="pt-6 text-center">
+                      <button
+                        onClick={() => handleDateFilterChange("all")}
+                        className="text-sm text-stone hover:text-ink transition-colors"
+                      >
+                        View all {scopedSessions.length} readings →
+                      </button>
+                    </div>
+                  )}
+
+                {/* Empty date-window state — there are readings, just none in this window */}
+                {filteredSessions.length === 0 && (
+                  <div className="py-16 text-center">
+                    <p className="font-serif text-xl text-stone italic mb-2">
+                      No readings {scopeLabel === "in total" ? "yet" : scopeLabel}
+                    </p>
+                    {hiddenByDate > 0 && activeDateFilter !== "all" && (
+                      <button
+                        onClick={() => handleDateFilterChange("all")}
+                        className="text-sm text-accent-blue hover:underline"
+                      >
+                        View all {scopedSessions.length} readings →
+                      </button>
+                    )}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </>
         )}
@@ -1392,49 +1534,182 @@ export function DashboardClient({
                       New assessment
                     </h2>
                     <p className="text-sm text-stone mb-8">
-                      Use a saved template or start fresh.
+                      Select a reading level, or reuse a saved template.
                     </p>
 
-                    {/* Templates list */}
+                    {/* Primary: leveled passage library */}
+                    <button
+                      onClick={() => setCreateStep("level")}
+                      className="w-full text-left p-6 rounded-lg bg-accent-blue/5 hover:bg-accent-blue/10 border border-accent-blue/20 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="text-lg font-medium text-ink">Leveled passage library</p>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
+                          New
+                        </span>
+                      </div>
+                      <p className="text-sm text-stone">
+                        Select reading level and passages for benchmark assessment with built-in comprehension questions
+                      </p>
+                    </button>
+
+                    {/* Collapsible templates below the primary option */}
                     {templates.length > 0 && (
-                      <div className="mb-8">
-                        <p className="text-xs font-medium text-stone uppercase tracking-wide mb-4">
-                          Templates
-                        </p>
-                        <div className="space-y-3">
-                          {templates.map((template) => (
-                            <button
-                              key={template.id}
-                              onClick={() => handleSelectTemplate(template)}
-                              className="w-full text-left p-4 rounded-lg border border-mist hover:border-accent-blue hover:bg-mist/30 transition-colors group"
+                      <div className="mt-6 pt-6 border-t border-mist">
+                        <button
+                          onClick={() => setShowChooseTemplates((v) => !v)}
+                          className="flex items-center justify-between w-full text-xs font-medium text-stone uppercase tracking-wide hover:text-ink transition-colors"
+                        >
+                          <span>Templates ({templates.length})</span>
+                          <svg
+                            className={`w-4 h-4 transition-transform ${showChooseTemplates ? "rotate-180" : ""}`}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+
+                        <AnimatePresence initial={false}>
+                          {showChooseTemplates && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: "auto", opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.2, ease: "easeOut" }}
+                              className="overflow-hidden"
                             >
-                              <p className="font-medium text-ink group-hover:text-accent-blue">
-                                {template.name}
-                              </p>
-                              <p className="text-sm text-stone mt-1">
-                                {template.passages.title} · {template.passages.word_count} words
-                              </p>
-                            </button>
-                          ))}
-                        </div>
+                              <div className="space-y-3 pt-4">
+                                {templates.map((template) => (
+                                  <button
+                                    key={template.id}
+                                    onClick={() => handleSelectTemplate(template)}
+                                    className="w-full text-left p-4 rounded-lg border border-mist hover:border-accent-blue hover:bg-mist/30 transition-colors group"
+                                  >
+                                    <p className="font-medium text-ink group-hover:text-accent-blue">
+                                      {template.name}
+                                    </p>
+                                    <p className="text-sm text-stone mt-1">
+                                      {template.passages.title} · {template.passages.word_count} words
+                                    </p>
+                                  </button>
+                                ))}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                       </div>
                     )}
+                  </div>
+                )}
 
-                    {/* Start fresh option */}
-                    <div className={templates.length > 0 ? "pt-6 border-t border-mist" : ""}>
-                      {templates.length > 0 && (
-                        <p className="text-xs font-medium text-stone uppercase tracking-wide mb-4">
-                          Or start fresh
-                        </p>
-                      )}
+                {/* Step: Select reading level */}
+                {createStep === "level" && (
+                  <div>
+                    <button
+                      onClick={() => setCreateStep("choose")}
+                      className="text-sm text-stone hover:text-ink mb-6"
+                    >
+                      ← Back
+                    </button>
+                    <h2 className="font-serif text-xl font-semibold text-ink mb-2">
+                      Select reading level
+                    </h2>
+                    <p className="text-sm text-stone mb-6">
+                      Choose the reading level for this assessment. Level 4 is typical for struggling middle school readers.
+                    </p>
+
+                    <ReadingLevelSelector
+                      value={selectedReadingLevel}
+                      onChange={(level) => {
+                        setSelectedReadingLevel(level);
+                        setSelectedPassageIds([]); // Reset passage selection when level changes
+                      }}
+                    />
+
+                    <div className="mt-8 flex justify-end">
                       <button
-                        onClick={() => setCreateStep("passage")}
-                        className="w-full text-left p-6 rounded-lg bg-mist/40 hover:bg-mist transition-colors"
+                        onClick={() => setCreateStep("count")}
+                        disabled={selectedReadingLevel === null}
+                        className="px-6 py-3 bg-accent-blue text-paper rounded-lg font-medium hover:bg-accent-blue/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
-                        <p className="text-lg font-medium text-ink">Select a passage</p>
-                        <p className="text-sm text-stone mt-1">
-                          Choose from the passage library and set your own questions
-                        </p>
+                        Continue
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step: Select passage count */}
+                {createStep === "count" && (
+                  <div>
+                    <button
+                      onClick={() => setCreateStep("level")}
+                      className="text-sm text-stone hover:text-ink mb-6"
+                    >
+                      ← Back
+                    </button>
+                    <h2 className="font-serif text-xl font-semibold text-ink mb-2">
+                      How many passages?
+                    </h2>
+                    <p className="text-sm text-stone mb-2">
+                      Assessment period: <span className="font-medium text-ink">{getAssessmentPeriodLabel(assessmentPeriod)}</span>
+                    </p>
+
+                    <div className="mt-6">
+                      <PassageCountSelector
+                        value={passageCount}
+                        onChange={(count) => {
+                          setPassageCount(count);
+                          // Trim selection if needed
+                          if (selectedPassageIds.length > count) {
+                            setSelectedPassageIds(selectedPassageIds.slice(0, count));
+                          }
+                        }}
+                      />
+                    </div>
+
+                    <div className="mt-8 flex justify-end">
+                      <button
+                        onClick={() => setCreateStep("passages")}
+                        className="px-6 py-3 bg-accent-blue text-paper rounded-lg font-medium hover:bg-accent-blue/90 transition-colors"
+                      >
+                        Continue
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step: Select passages from library */}
+                {createStep === "passages" && selectedReadingLevel !== null && (
+                  <div>
+                    <button
+                      onClick={() => setCreateStep("count")}
+                      className="text-sm text-stone hover:text-ink mb-6"
+                    >
+                      ← Back
+                    </button>
+                    <h2 className="font-serif text-xl font-semibold text-ink mb-2">
+                      Select passages
+                    </h2>
+                    <p className="text-sm text-stone mb-6">
+                      Level {selectedReadingLevel} · {passageCount} passage{passageCount > 1 ? "s" : ""} · Each passage includes comprehension questions
+                    </p>
+
+                    <PassageSelector
+                      level={selectedReadingLevel}
+                      maxSelections={passageCount}
+                      selected={selectedPassageIds}
+                      onChange={setSelectedPassageIds}
+                    />
+
+                    <div className="mt-8 flex justify-end">
+                      <button
+                        onClick={() => setCreateStep("label")}
+                        disabled={selectedPassageIds.length !== passageCount}
+                        className="px-6 py-3 bg-accent-blue text-paper rounded-lg font-medium hover:bg-accent-blue/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Continue
                       </button>
                     </div>
                   </div>
@@ -1597,7 +1872,11 @@ export function DashboardClient({
                           // If using template, go back to choose
                           setSelectedTemplate(null);
                           setCreateStep("choose");
+                        } else if (selectedPassageIds.length > 0) {
+                          // Using new passage library flow
+                          setCreateStep("passages");
                         } else {
+                          // Legacy flow with database passages
                           setCreateStep("questions");
                         }
                       }}
@@ -1611,6 +1890,11 @@ export function DashboardClient({
                     {selectedTemplate && (
                       <p className="text-sm text-accent-blue mb-6">
                         Using template: {selectedTemplate.name}
+                      </p>
+                    )}
+                    {selectedPassageIds.length > 0 && selectedReadingLevel !== null && (
+                      <p className="text-sm text-accent-blue mb-6">
+                        Level {selectedReadingLevel} · {selectedPassageIds.length} passage{selectedPassageIds.length > 1 ? "s" : ""} · {assessmentPeriod}
                       </p>
                     )}
 

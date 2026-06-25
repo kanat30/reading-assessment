@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# validation data (student recordings - never commit)
+validation-data/*.webm
+validation-data/*.mp3
+validation-data/*.wav
+validation-data/samples.json

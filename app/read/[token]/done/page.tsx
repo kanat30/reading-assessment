@@ -1,37 +1,123 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Suspense, use, useEffect } from "react";
+import { Suspense, use, useEffect, useState } from "react";
 import { AnimatedCheckmark } from "@/components/AnimatedCheckmark";
-import { playChime, getSoundEnabled } from "@/lib/audio/sounds";
+import { playChime, playTick, getSoundEnabled } from "@/lib/audio/sounds";
+import { Button } from "@/components/ui/button";
+
+// Session storage key for passage index in multi-passage flow
+const PASSAGE_INDEX_KEY = "fs:passage-index";
 
 interface DonePageProps {
   params: Promise<{ token: string }>;
 }
 
 function DoneContent({ token }: { token: string }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("s");
+  const passageIndex = parseInt(searchParams.get("pi") || "0", 10);
+  const totalPassages = parseInt(searchParams.get("tp") || "1", 10);
+
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  // Check if there are more passages to read
+  const hasMorePassages = passageIndex < totalPassages - 1;
+  const nextPassageNumber = passageIndex + 2; // 1-indexed for display
 
   // Play chime on mount (if sounds enabled and not already played)
   useEffect(() => {
-    // The chime should have been played in the recording page
-    // but we can play it here as a fallback if needed
-    // Only play if we got here through a fresh navigation
     const hasPlayedChime = sessionStorage.getItem("fs:chime-played");
     if (!hasPlayedChime && getSoundEnabled()) {
       playChime();
       sessionStorage.setItem("fs:chime-played", "true");
 
-      // Clear the flag after a short delay
       setTimeout(() => {
         sessionStorage.removeItem("fs:chime-played");
       }, 2000);
     }
   }, []);
 
+  const handleContinue = () => {
+    setIsTransitioning(true);
+    playTick();
+
+    // Update passage index in session storage
+    const nextIndex = passageIndex + 1;
+    sessionStorage.setItem(PASSAGE_INDEX_KEY, nextIndex.toString());
+
+    // Navigate back to recording page for next passage
+    router.push(`/read/${token}/recording`);
+  };
+
+  // Multi-passage: show transition UI
+  if (hasMorePassages) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
+        className="min-h-screen bg-paper flex flex-col items-center justify-center px-6"
+      >
+        <AnimatedCheckmark size={80} delay={0.1} className="mb-6" />
+
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.4 }}
+          className="text-center max-w-sm"
+        >
+          <h1 className="font-serif text-[36px] font-semibold text-ink mb-3">
+            Great reading!
+          </h1>
+
+          <div className="bg-accent-blue/10 rounded-2xl px-6 py-5 mb-6">
+            <p className="text-lg text-ink font-medium mb-1">
+              Passage {passageIndex + 1} of {totalPassages} complete
+            </p>
+            <p className="text-stone text-sm">
+              {totalPassages - passageIndex - 1} more {totalPassages - passageIndex - 1 === 1 ? "passage" : "passages"} to go
+            </p>
+          </div>
+
+          <Button
+            onClick={handleContinue}
+            disabled={isTransitioning}
+            className="w-full bg-ink text-paper hover:bg-ink/90 rounded-xl py-6 text-lg font-medium"
+          >
+            {isTransitioning ? (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    fill="none"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                Loading...
+              </span>
+            ) : (
+              `Continue to Passage ${nextPassageNumber}`
+            )}
+          </Button>
+        </motion.div>
+      </motion.div>
+    );
+  }
+
+  // All passages complete: show final done message
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -39,7 +125,6 @@ function DoneContent({ token }: { token: string }) {
       transition={{ duration: 0.4, ease: "easeOut" }}
       className="min-h-screen bg-paper flex flex-col items-center justify-center px-6"
     >
-      {/* Animated checkmark */}
       <AnimatedCheckmark size={100} delay={0.1} className="mb-6" />
 
       <motion.div
@@ -54,7 +139,9 @@ function DoneContent({ token }: { token: string }) {
 
         <div className="bg-success/10 rounded-2xl px-6 py-5 mb-6">
           <p className="text-lg text-ink font-medium">
-            Great job completing your assessment!
+            {totalPassages > 1
+              ? `Great job completing all ${totalPassages} passages!`
+              : "Great job completing your assessment!"}
           </p>
         </div>
 

@@ -11,8 +11,54 @@ import { generateSummary } from "@/lib/scoring/summary";
 import { analyzeProsody } from "@/lib/scoring/prosody";
 import { extractPeaks } from "@/lib/scoring/waveform";
 import { DeepgramWord, SessionEvent, ScoringMetrics, ProsodyScore, EnhancedErrorPattern } from "@/lib/scoring/types";
+import { getPassageById } from "@/lib/passages/library";
 
 const deepgram = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY! });
+
+/**
+ * Extract keyterms from passage text to boost ASR recognition.
+ * Focuses on proper nouns and challenging vocabulary.
+ * Limited to 100 terms per Deepgram API constraint.
+ */
+function extractKeyterms(passageText: string): string[] {
+  const words = passageText.split(/\s+/);
+  const keyterms = new Set<string>();
+
+  // Split into sentences to identify sentence-initial words
+  const sentences = passageText.split(/[.!?]+/);
+  const sentenceStarters = new Set<string>();
+  for (const sentence of sentences) {
+    const firstWord = sentence.trim().split(/\s+/)[0];
+    if (firstWord) {
+      sentenceStarters.add(firstWord.toLowerCase());
+    }
+  }
+
+  for (const word of words) {
+    // Clean the word of punctuation for matching
+    const cleaned = word.replace(/[^a-zA-Z'-]/g, "");
+    if (!cleaned || cleaned.length < 3) continue;
+
+    // Proper nouns: capitalized words that aren't sentence starters
+    // (character names, place names, etc.)
+    if (
+      /^[A-Z][a-z]/.test(cleaned) &&
+      !sentenceStarters.has(cleaned.toLowerCase())
+    ) {
+      keyterms.add(cleaned);
+    }
+
+    // Multi-syllable words (rough heuristic: count vowel groups)
+    // These are often challenging vocabulary
+    const vowelGroups = cleaned.toLowerCase().match(/[aeiouy]+/g);
+    if (vowelGroups && vowelGroups.length >= 3) {
+      keyterms.add(cleaned);
+    }
+  }
+
+  // Return up to 100 keyterms (API limit)
+  return Array.from(keyterms).slice(0, 100);
+}
 
 interface ScoringResult {
   events: SessionEvent[];
@@ -34,12 +80,17 @@ async function runScoringPipeline(
   durationSeconds: number
 ): Promise<ScoringResult> {
   // Layer 1: Deepgram ASR
+  // Extract passage-specific vocabulary to boost recognition accuracy
+  const keyterms = extractKeyterms(passageText);
+
   const response = await deepgram.listen.v1.media.transcribeFile(audioBuffer, {
     model: "nova-3",
     language: "en",
     smart_format: false,
     punctuate: false,
     utterances: false,
+    filler_words: true, // Capture hesitations (um, uh) for disfluency detection
+    keyterm: keyterms.length > 0 ? keyterms : undefined, // Boost passage vocabulary
   });
 
   // Extract words from response
@@ -197,6 +248,11 @@ export async function POST(request: NextRequest) {
     const studentName = formData.get("student_name") as string;
     const durationSeconds = parseFloat(formData.get("duration_seconds") as string);
 
+    // Multi-passage support: passage tracking from library
+    const passageId = formData.get("passage_id") as string | null;
+    const passageIndexStr = formData.get("passage_index") as string | null;
+    const passageIndex = passageIndexStr ? parseInt(passageIndexStr, 10) : 0;
+
     // Validate inputs
     if (!audioFile || !assessmentToken || !studentName || isNaN(durationSeconds)) {
       return NextResponse.json(
@@ -232,7 +288,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const passage = assessment.passages;
+    // Get passage - either from library (new flow) or database (legacy flow)
+    let passageText: string;
+    let passageTitle: string;
+
+    if (passageId) {
+      // Library passage flow: look up passage from in-memory library
+      const libraryPassage = getPassageById(passageId);
+      if (!libraryPassage) {
+        return NextResponse.json(
+          { error: "Passage not found in library" },
+          { status: 404 }
+        );
+      }
+      passageText = libraryPassage.text;
+      passageTitle = libraryPassage.title;
+    } else if (assessment.passages) {
+      // Legacy database passage flow
+      passageText = assessment.passages.text;
+      passageTitle = assessment.passages.title;
+    } else {
+      return NextResponse.json(
+        { error: "No passage found for assessment" },
+        { status: 404 }
+      );
+    }
 
     // Find or create student
     const { data: existingStudent } = await supabase
@@ -293,6 +373,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Create session with status='pending'
+    // Include passage tracking for multi-passage library flow
     const { error: sessionError } = await supabase.from("sessions").insert({
       id: sessionId,
       assessment_id: assessment.id,
@@ -300,6 +381,8 @@ export async function POST(request: NextRequest) {
       audio_url: audioPath,
       duration_seconds: durationSeconds,
       status: "pending",
+      ...(passageId && { passage_id: passageId }),
+      passage_index: passageIndex,
     });
 
     if (sessionError) {
@@ -315,8 +398,8 @@ export async function POST(request: NextRequest) {
       processScoring(
         sessionId,
         audioBuffer,
-        passage.text,
-        passage.title,
+        passageText,
+        passageTitle,
         durationSeconds
       )
     );

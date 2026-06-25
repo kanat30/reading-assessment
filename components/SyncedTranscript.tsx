@@ -38,7 +38,7 @@ export function SyncedTranscript({
   onOverrideSave,
   onOverrideDelete,
 }: SyncedTranscriptProps) {
-  const words = passageText.split(/\s+/);
+  const words = useMemo(() => passageText.split(/\s+/), [passageText]);
   const [activeWordIndex, setActiveWordIndex] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -66,11 +66,15 @@ export function SyncedTranscript({
   }, [overrides]);
 
   // Create word timing data (for seeking)
-  const wordTimings = events.map((e) => ({
-    index: e.word_index,
-    startMs: e.start_timestamp_ms,
-    endMs: e.end_timestamp_ms,
-  }));
+  const wordTimings = useMemo(
+    () =>
+      events.map((e) => ({
+        index: e.word_index,
+        startMs: e.start_timestamp_ms,
+        endMs: e.end_timestamp_ms,
+      })),
+    [events]
+  );
 
   // Find the current word based on playback time
   useEffect(() => {

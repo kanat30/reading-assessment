@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { playTick, playChime } from "@/lib/audio/sounds";
 import { createClient } from "@/lib/supabase/browser";
+import { getPassageById } from "@/lib/passages/library";
 
 interface Question {
   id: string;
@@ -28,6 +29,8 @@ function ComprehensionContent({ token }: { token: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("s");
+  const passageIndex = parseInt(searchParams.get("pi") || "0", 10);
+  const totalPassages = parseInt(searchParams.get("tp") || "1", 10);
   const supabase = createClient();
 
   const [state, setState] = useState<"loading" | "ready" | "submitting" | "error">("loading");
@@ -35,6 +38,14 @@ function ComprehensionContent({ token }: { token: string }) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [currentQuestion, setCurrentQuestion] = useState(0);
+
+  // Build done URL with passage tracking params
+  const buildDoneUrl = () => {
+    const params = new URLSearchParams({ s: sessionId || "" });
+    params.set("pi", passageIndex.toString());
+    params.set("tp", totalPassages.toString());
+    return `/read/${token}/done?${params.toString()}`;
+  };
 
   // Load passage and questions
   useEffect(() => {
@@ -44,42 +55,94 @@ function ComprehensionContent({ token }: { token: string }) {
         return;
       }
 
-      // Get session with passage info
+      // Get session with passage info - both library and legacy fields
       const { data: session, error: sessionError } = await supabase
         .from("sessions")
         .select(`
+          passage_id,
           assessments(
             passage_id,
+            passage_ids,
             passages(id, title, text)
           )
         `)
         .eq("id", sessionId)
         .single();
 
-      // Extract passage from nested relations (Supabase returns single objects for FK relations
-      // but TypeScript infers arrays - cast through unknown to handle this)
-      const assessments = session?.assessments as unknown as { passage_id: string; passages: Passage } | null;
-
-      if (sessionError || !assessments?.passages) {
+      if (sessionError || !session) {
         console.error("Error loading session:", sessionError);
-        // No questions for this passage, skip to done
-        router.replace(`/read/${token}/done?s=${sessionId}`);
+        router.replace(buildDoneUrl());
         return;
       }
 
-      const passageData = assessments.passages;
+      // Extract assessment from nested relations
+      const assessments = session.assessments as unknown as {
+        passage_id: string | null;
+        passage_ids: string[] | null;
+        passages: Passage | null;
+      } | null;
+
+      let passageData: Passage | null = null;
+      let passageIdForQuestions: string | null = null;
+
+      // Check for library passage first (session.passage_id is the library passage ID)
+      if (session.passage_id) {
+        const libraryPassage = getPassageById(session.passage_id);
+        if (libraryPassage) {
+          passageData = {
+            id: libraryPassage.id,
+            title: libraryPassage.title,
+            text: libraryPassage.text,
+          };
+          passageIdForQuestions = libraryPassage.id;
+        }
+      }
+      // Fall back to legacy database passage
+      else if (assessments?.passages) {
+        passageData = assessments.passages;
+        passageIdForQuestions = assessments.passages.id;
+      }
+
+      if (!passageData) {
+        // No passage found, skip to done
+        router.replace(buildDoneUrl());
+        return;
+      }
+
       setPassage(passageData);
 
-      // Get questions for this passage
+      // For library passages, questions are embedded in the passage
+      // For DB passages, fetch from passage_questions table
+      if (session.passage_id) {
+        // Library passage - get questions from passage object
+        const libraryPassage = getPassageById(session.passage_id);
+        if (libraryPassage?.questions && libraryPassage.questions.length > 0) {
+          const formattedQuestions: Question[] = libraryPassage.questions.map((q, idx) => ({
+            id: `lib-${session.passage_id}-${idx}`,
+            question: q.question,
+            question_type: q.type,
+            display_order: idx,
+          }));
+          setQuestions(formattedQuestions);
+          setState("ready");
+          return;
+        } else {
+          // No questions for this library passage, skip to done
+          router.replace(buildDoneUrl());
+          return;
+        }
+      }
+
+      // Legacy DB passage - fetch questions from database
       const { data: questionRows, error: questionsError } = await supabase
         .from("passage_questions")
         .select("id, question, question_type, display_order")
-        .eq("passage_id", passageData.id)
+        .eq("passage_id", passageIdForQuestions)
         .order("display_order", { ascending: true });
 
       if (questionsError || !questionRows || questionRows.length === 0) {
         // No questions, skip to done
-        router.replace(`/read/${token}/done?s=${sessionId}`);
+        router.replace(buildDoneUrl());
         return;
       }
 
@@ -128,11 +191,11 @@ function ComprehensionContent({ token }: { token: string }) {
       }
 
       playChime();
-      router.push(`/read/${token}/done?s=${sessionId}`);
+      router.push(buildDoneUrl());
     } catch (error) {
       console.error("Comprehension submit error:", error);
       // Still redirect even if there's an error
-      router.push(`/read/${token}/done?s=${sessionId}`);
+      router.push(buildDoneUrl());
     }
   };
 

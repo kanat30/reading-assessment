@@ -50,6 +50,7 @@ export function useWaveSurfer(options: UseWaveSurferOptions = {}): UseWaveSurfer
   const containerRef = useRef<HTMLDivElement | null>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
 
+  const [wavesurfer, setWavesurfer] = useState<WaveSurfer | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -79,6 +80,7 @@ export function useWaveSurfer(options: UseWaveSurferOptions = {}): UseWaveSurfer
     });
 
     wavesurferRef.current = ws;
+    setWavesurfer(ws);
 
     // Event listeners
     ws.on("ready", () => {
@@ -125,6 +127,7 @@ export function useWaveSurfer(options: UseWaveSurferOptions = {}): UseWaveSurfer
     return () => {
       ws.destroy();
       wavesurferRef.current = null;
+      setWavesurfer(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergedOptions.url]);
@@ -155,7 +158,7 @@ export function useWaveSurfer(options: UseWaveSurferOptions = {}): UseWaveSurfer
 
   return {
     containerRef,
-    wavesurfer: wavesurferRef.current,
+    wavesurfer,
     isPlaying,
     isReady,
     currentTime,

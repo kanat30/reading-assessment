@@ -10,11 +10,14 @@ import { DetailedDataPanel } from "./DetailedDataPanel";
 import { ReportSkeleton } from "./skeletons/ReportSkeleton";
 import { AudioQualityIndicator } from "./AudioQualityIndicator";
 import { TeacherNotesSection } from "./TeacherNotesSection";
+import { BenchmarkBand } from "./report";
 import { useCountUp } from "@/hooks/useCountUp";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useIntersectionObserver } from "@/hooks/useIntersectionObserver";
 import { SessionEvent, SessionEventOverride, EnhancedErrorPattern, EventType, EventOverrideAction } from "@/lib/scoring/types";
 import { SCORE_REVEAL } from "@/lib/animation/constants";
+import { ReadingLevel, AssessmentPeriod } from "@/lib/passages/library";
+import { calculateBenchmark, BenchmarkResult } from "@/lib/scoring/benchmark";
 
 interface SessionReportProps {
   sessionId: string;
@@ -85,6 +88,8 @@ interface SessionData {
   students: StudentData;
   assessments: {
     passages: PassageData;
+    reading_level: ReadingLevel | null;
+    assessment_period: AssessmentPeriod | null;
   };
 }
 
@@ -157,7 +162,11 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             scores_json,
             teacher_review_status,
             students(first_name, last_name),
-            assessments(passages(id, title, text, grade_band))
+            assessments(
+              passages(id, title, text, grade_band),
+              reading_level,
+              assessment_period
+            )
           `)
           .eq("id", sessionId)
           .single();
@@ -230,7 +239,11 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         const transformedSession = {
           ...sessionData,
           students: sessionData.students as unknown as StudentData,
-          assessments: sessionData.assessments as unknown as { passages: PassageData },
+          assessments: sessionData.assessments as unknown as {
+            passages: PassageData;
+            reading_level: ReadingLevel | null;
+            assessment_period: AssessmentPeriod | null;
+          },
           scores_json: sessionData.scores_json as ScoresJson,
           teacher_review_status: sessionData.teacher_review_status || "unreviewed",
         };
@@ -272,6 +285,16 @@ export function SessionReport({ sessionId }: SessionReportProps) {
     isReportVisible,
     reducedMotion
   );
+
+  // Calculate benchmark if reading_level and assessment_period are available
+  const benchmarkResult: BenchmarkResult | null = (() => {
+    const readingLevel = session?.assessments?.reading_level;
+    const assessmentPeriod = session?.assessments?.assessment_period;
+    if (readingLevel && assessmentPeriod && wcpm > 0) {
+      return calculateBenchmark(wcpm, readingLevel, assessmentPeriod);
+    }
+    return null;
+  })();
 
   // Trigger percentile animation after WCPM finishes
   useEffect(() => {
@@ -325,7 +348,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         .select(`
           id, status, created_at, duration_seconds, scores_json, teacher_review_status,
           students(first_name, last_name),
-          assessments(passages(id, title, text, grade_band))
+          assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
         `)
         .eq("id", sessionId)
         .single();
@@ -334,7 +357,11 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         setSession({
           ...updatedSession,
           students: updatedSession.students as unknown as StudentData,
-          assessments: updatedSession.assessments as unknown as { passages: PassageData },
+          assessments: updatedSession.assessments as unknown as {
+            passages: PassageData;
+            reading_level: ReadingLevel | null;
+            assessment_period: AssessmentPeriod | null;
+          },
           scores_json: updatedSession.scores_json as ScoresJson,
           teacher_review_status: updatedSession.teacher_review_status || "unreviewed",
         });
@@ -423,7 +450,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           .select(`
             id, status, created_at, duration_seconds, scores_json, teacher_review_status,
             students(first_name, last_name),
-            assessments(passages(id, title, text, grade_band))
+            assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
           `)
           .eq("id", sessionId)
           .single();
@@ -432,7 +459,11 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           setSession({
             ...updatedSession,
             students: updatedSession.students as unknown as StudentData,
-            assessments: updatedSession.assessments as unknown as { passages: PassageData },
+            assessments: updatedSession.assessments as unknown as {
+              passages: PassageData;
+              reading_level: ReadingLevel | null;
+              assessment_period: AssessmentPeriod | null;
+            },
             scores_json: updatedSession.scores_json as ScoresJson,
             teacher_review_status: updatedSession.teacher_review_status || "unreviewed",
           });
@@ -484,7 +515,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         .select(`
           id, status, created_at, duration_seconds, scores_json, teacher_review_status,
           students(first_name, last_name),
-          assessments(passages(id, title, text, grade_band))
+          assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
         `)
         .eq("id", sessionId)
         .single();
@@ -493,7 +524,11 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         setSession({
           ...updatedSession,
           students: updatedSession.students as unknown as StudentData,
-          assessments: updatedSession.assessments as unknown as { passages: PassageData },
+          assessments: updatedSession.assessments as unknown as {
+            passages: PassageData;
+            reading_level: ReadingLevel | null;
+            assessment_period: AssessmentPeriod | null;
+          },
           scores_json: updatedSession.scores_json as ScoresJson,
           teacher_review_status: updatedSession.teacher_review_status || "unreviewed",
         });
@@ -622,36 +657,48 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           </span>
         </div>
 
-        {/* Percentile line */}
-        <p className="text-base text-stone mt-3">
-          {getOrdinalSuffix(metrics.percentile_estimate)} percentile · grade {passage.grade_band} spring
-        </p>
+        {/* Percentile line - show benchmark if available, otherwise show old percentile */}
+        {benchmarkResult ? (
+          <p className="text-base text-stone mt-3">
+            {benchmarkResult.label} · Level {session.assessments.reading_level} · {benchmarkResult.period}
+          </p>
+        ) : (
+          <p className="text-base text-stone mt-3">
+            {getOrdinalSuffix(metrics.percentile_estimate)} percentile · grade {passage.grade_band} spring
+          </p>
+        )}
       </div>
 
-      {/* ===== PERCENTILE BAR ===== */}
-      <div className="max-w-[600px] mx-auto relative">
-        <div className="w-full h-1.5 bg-mist rounded-full overflow-hidden relative">
-          {/* 50th percentile marker */}
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-px bg-stone/30"
-            style={{ left: "50%" }}
-          />
-
-          {/* Animated fill - neutral shades to show position without implying judgment */}
-          <motion.div
-            className={`h-full rounded-full ${
-              metrics.percentile_band === "above"
-                ? "bg-ink"
-                : metrics.percentile_band === "approaching"
-                ? "bg-stone"
-                : "bg-stone/60"
-            }`}
-            initial={{ width: reducedMotion ? `${metrics.percentile_estimate}%` : 0 }}
-            animate={{ width: percentileAnimated ? `${metrics.percentile_estimate}%` : 0 }}
-            transition={reducedMotion ? { duration: 0 } : { duration: SCORE_REVEAL.percentile, ease: "easeOut" }}
-          />
+      {/* ===== BENCHMARK / PERCENTILE BAR ===== */}
+      {benchmarkResult ? (
+        <div className="max-w-[600px] mx-auto">
+          <BenchmarkBand result={benchmarkResult} showNorms={true} />
         </div>
-      </div>
+      ) : (
+        <div className="max-w-[600px] mx-auto relative">
+          <div className="w-full h-1.5 bg-mist rounded-full overflow-hidden relative">
+            {/* 50th percentile marker */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-3 h-px bg-stone/30"
+              style={{ left: "50%" }}
+            />
+
+            {/* Animated fill - neutral shades to show position without implying judgment */}
+            <motion.div
+              className={`h-full rounded-full ${
+                metrics.percentile_band === "above"
+                  ? "bg-ink"
+                  : metrics.percentile_band === "approaching"
+                  ? "bg-stone"
+                  : "bg-stone/60"
+              }`}
+              initial={{ width: reducedMotion ? `${metrics.percentile_estimate}%` : 0 }}
+              animate={{ width: percentileAnimated ? `${metrics.percentile_estimate}%` : 0 }}
+              transition={reducedMotion ? { duration: 0 } : { duration: SCORE_REVEAL.percentile, ease: "easeOut" }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* ===== AUDIO QUALITY WARNING ===== */}
       <AudioQualityIndicator avgConfidence={scoresJson.avg_confidence} />
@@ -928,7 +975,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                   {JSON.stringify(override.original_value)} → {JSON.stringify(override.new_value)}
                   {" · "}{dateStr} by {teacherName}
                   {override.reason && (
-                    <span className="italic"> · "{override.reason}"</span>
+                    <span className="italic"> · &ldquo;{override.reason}&rdquo;</span>
                   )}
                 </p>
               );
