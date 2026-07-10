@@ -757,6 +757,18 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             edited
           </span>
         )}
+        <p className="text-xs text-stone mt-3">
+          Results are advisory screening data, not a diagnosis or placement.
+          You can edit any AI-generated content.{" "}
+          <a
+            href="/explainability"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent-blue hover:underline"
+          >
+            How scoring works
+          </a>
+        </p>
       </div>
 
       {/* ===== ERROR PATTERNS ===== */}
