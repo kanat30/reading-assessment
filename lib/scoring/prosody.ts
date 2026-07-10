@@ -1,9 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { SessionEvent, ProsodyScore } from "./types";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+import { anthropic, CLAUDE_MODEL, logAiFallback } from "./ai";
 
 interface PauseData {
   avgPauseBetweenWords: number;
@@ -76,7 +72,7 @@ export async function analyzeProsody(
 
   try {
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
+      model: CLAUDE_MODEL,
       max_tokens: 400,
       messages: [
         {
@@ -126,7 +122,7 @@ Respond ONLY with the JSON, no other text.`,
       };
     }
   } catch (error) {
-    console.error("Prosody analysis error:", error);
+    logAiFallback("prosody", error);
   }
 
   // Fallback: estimate prosody from pause data

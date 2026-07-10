@@ -1,8 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+import { anthropic, CLAUDE_MODEL, logAiFallback } from "./ai";
 
 export interface GeneratedQuestion {
   question: string;
@@ -21,7 +17,7 @@ export async function generateQuestions(
 ): Promise<GeneratedQuestion[]> {
   try {
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
+      model: CLAUDE_MODEL,
       max_tokens: 500,
       messages: [
         {
@@ -84,7 +80,7 @@ JSON array only, no other text.`,
 
     return parsed;
   } catch (error) {
-    console.error("Question generation error:", error);
+    logAiFallback("question-generation", error);
     // Return fallback generic questions if AI fails
     return [
       {

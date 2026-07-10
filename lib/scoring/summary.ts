@@ -1,9 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { EnhancedErrorPattern } from "./types";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+import { anthropic, CLAUDE_MODEL, logAiFallback } from "./ai";
 
 export async function generateSummary(
   wcpm: number,
@@ -18,7 +14,7 @@ export async function generateSummary(
       : "No significant patterns";
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
+      model: CLAUDE_MODEL,
       max_tokens: 200,
       messages: [
         {
@@ -40,7 +36,7 @@ Write the summary now.`,
     const textBlock = response.content.find((block) => block.type === "text");
     return textBlock ? textBlock.text : "Summary unavailable.";
   } catch (error) {
-    console.error("Claude summary error:", error);
+    logAiFallback("summary", error);
     // Graceful fallback - generate a basic summary without Claude
     const benchmark = 150;
     const performance = wcpm >= benchmark ? "at or above" : "below";

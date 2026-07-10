@@ -1,9 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { ComprehensionQuestion, ComprehensionAnswer, ComprehensionResult, ComprehensionStatus } from "./types";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+import { anthropic, CLAUDE_MODEL } from "./ai";
 
 async function gradeQuestion(
   passageText: string,
@@ -11,7 +7,7 @@ async function gradeQuestion(
   studentAnswer: string
 ): Promise<ComprehensionAnswer> {
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5",
+    model: CLAUDE_MODEL,
     max_tokens: 300,
     messages: [
       {
