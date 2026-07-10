@@ -5,7 +5,12 @@ import { useRef, useState, useEffect, Suspense, use } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { v4 as uuidv4 } from "uuid";
 import { BreathingDot } from "@/components/BreathingDot";
-import { UploadProgress } from "@/lib/audio/upload";
+import {
+  UploadProgress,
+  UploadParams,
+  uploadWithRetry,
+  startOfflineRecovery,
+} from "@/lib/audio/upload";
 import { playTick, playError } from "@/lib/audio/sounds";
 import { createClient } from "@/lib/supabase/browser";
 import { getPassageById, Passage as LibraryPassage } from "@/lib/passages/library";
@@ -74,6 +79,8 @@ function RecordingContent({ token }: { token: string }) {
   );
   const [audioLevel, setAudioLevel] = useState(0);
   const [hasDetectedAudio, setHasDetectedAudio] = useState(false);
+  // Mirrors recordedBlobRef for rendering (refs must not be read in render)
+  const [hasRecording, setHasRecording] = useState(false);
 
   // Multi-passage support
   const [currentPassageIndex, setCurrentPassageIndex] = useState(0);
@@ -87,6 +94,11 @@ function RecordingContent({ token }: { token: string }) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioChunksRef = useRef<Blob[]>([]); // Store chunks in memory instead of IndexedDB
   const audioSessionIdRef = useRef<string>(uuidv4());
+  // Keep the finished recording so a failed upload can be retried without
+  // making the student read the passage again.
+  const recordedBlobRef = useRef<Blob | null>(null);
+  const recordedDurationRef = useRef<number>(0);
+  const offlineCleanupRef = useRef<(() => void) | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -295,6 +307,8 @@ function RecordingContent({ token }: { token: string }) {
       if (audioContextRef.current) {
         audioContextRef.current.close();
       }
+      // Stop offline-recovery polling
+      offlineCleanupRef.current?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
@@ -483,55 +497,73 @@ function RecordingContent({ token }: { token: string }) {
       return;
     }
 
-    setUploadProgress({ status: "uploading", attempt: 1, maxAttempts: 3, message: "Uploading..." });
+    recordedBlobRef.current = audioBlob;
+    recordedDurationRef.current = durationSeconds;
+    setHasRecording(true);
 
-    // Upload directly without IndexedDB
-    try {
-      const formData = new FormData();
-      formData.append("audio", audioBlob, "recording.webm");
-      formData.append("assessment_token", token);
-      formData.append("student_name", studentName);
-      formData.append("duration_seconds", durationSeconds.toString());
-
-      // Add passage tracking for multi-passage and library passage support
-      if (currentPassage) {
-        formData.append("passage_id", currentPassage.id);
-        formData.append("passage_index", currentPassageIndex.toString());
-      }
-
-      const response = await fetch("/api/score", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.status}`);
-      }
-
-      const { session_id } = await response.json();
-
-      setUploadProgress({ status: "success", attempt: 1, maxAttempts: 3, message: "Done!" });
-      playTick();
-
-      // Navigate to comprehension with passage tracking info
-      const searchParams = new URLSearchParams({
-        s: session_id,
-        pi: currentPassageIndex.toString(),
-        tp: totalPassages.toString(),
-      });
-      router.push(`/read/${token}/comprehension?${searchParams.toString()}`);
-      return;
-    } catch (err) {
-      console.error("Upload error:", err);
-      setState("error");
-      playError();
-      setErrorMessage("Failed to upload recording. Please check your connection and try again.");
-      return;
-    }
+    await performUpload();
   };
 
+  function navigateToComprehension(sessionId: string) {
+    playTick();
+    const searchParams = new URLSearchParams({
+      s: sessionId,
+      pi: currentPassageIndex.toString(),
+      tp: totalPassages.toString(),
+    });
+    router.push(`/read/${token}/comprehension?${searchParams.toString()}`);
+  }
+
+  // Upload with retry/backoff; falls back to offline recovery (auto-upload
+  // when the connection returns) so a WiFi blip never loses a reading.
+  async function performUpload() {
+    const audioBlob = recordedBlobRef.current;
+    if (!audioBlob) return;
+
+    setState("uploading");
+    setUploadProgress({ status: "uploading", attempt: 1, maxAttempts: 4, message: "Uploading..." });
+
+    const params: UploadParams = {
+      audioSessionId: audioSessionIdRef.current,
+      assessmentToken: token,
+      studentName,
+      durationSeconds: recordedDurationRef.current,
+      audioBlob,
+      passageId: currentPassage?.id ?? null,
+      passageIndex: currentPassageIndex,
+    };
+
+    const result = await uploadWithRetry(params, setUploadProgress);
+
+    if (result.success && result.sessionId) {
+      navigateToComprehension(result.sessionId);
+      return;
+    }
+
+    if (result.isOffline) {
+      setState("offline");
+      offlineCleanupRef.current?.();
+      offlineCleanupRef.current = startOfflineRecovery(
+        params,
+        (sessionId) => navigateToComprehension(sessionId),
+        setUploadProgress
+      );
+      return;
+    }
+
+    setState("error");
+    playError();
+    setErrorMessage(
+      "We couldn't upload your reading. It's saved on this page — check the connection and try again."
+    );
+  }
+
   const handleRetry = async () => {
-    // Reset state
+    // Full reset — discards the recording and starts over
+    offlineCleanupRef.current?.();
+    offlineCleanupRef.current = null;
+    recordedBlobRef.current = null;
+    setHasRecording(false);
     audioChunksRef.current = [];
     setErrorMessage("");
     setElapsedTime(0);
@@ -610,12 +642,29 @@ function RecordingContent({ token }: { token: string }) {
         <p className="font-serif text-xl text-ink italic text-center max-w-md mb-4">
           {errorMessage || "Something went wrong."}
         </p>
-        <button
-          onClick={handleRetry}
-          className="text-sm text-accent-blue hover:underline"
-        >
-          Try again
-        </button>
+        {hasRecording ? (
+          <div className="flex flex-col items-center gap-3">
+            <button
+              onClick={performUpload}
+              className="text-sm text-accent-blue hover:underline"
+            >
+              Try uploading again
+            </button>
+            <button
+              onClick={handleRetry}
+              className="text-xs text-stone hover:underline"
+            >
+              Start over and record again
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={handleRetry}
+            className="text-sm text-accent-blue hover:underline"
+          >
+            Try again
+          </button>
+        )}
       </div>
     );
   }
@@ -628,7 +677,8 @@ function RecordingContent({ token }: { token: string }) {
           You&apos;re offline.
         </p>
         <p className="text-sm text-stone text-center max-w-md">
-          Your recording is saved on this device. We&apos;ll upload it when you&apos;re back online.
+          Your recording is safe. Keep this page open — we&apos;ll upload it
+          automatically as soon as you&apos;re back online.
         </p>
       </div>
     );

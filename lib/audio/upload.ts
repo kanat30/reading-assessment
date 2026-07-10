@@ -36,6 +36,11 @@ export interface UploadParams {
   assessmentToken: string;
   studentName: string;
   durationSeconds: number;
+  /** In-memory recording blob. When provided, IndexedDB assembly is skipped
+   *  (the recording page keeps chunks in memory — works in incognito). */
+  audioBlob?: Blob;
+  passageId?: string | null;
+  passageIndex?: number;
 }
 
 /**
@@ -60,13 +65,17 @@ export async function uploadWithRetry(
     return { success: false, isOffline: true };
   }
 
-  // Assemble the blob from IndexedDB
+  // Use the in-memory blob when given; otherwise assemble from IndexedDB
   let audioBlob: Blob;
-  try {
-    audioBlob = await assembleBlob(audioSessionId);
-  } catch (e) {
-    console.error("Failed to assemble audio blob:", e);
-    return { success: false, error: "Failed to assemble recording" };
+  if (params.audioBlob) {
+    audioBlob = params.audioBlob;
+  } else {
+    try {
+      audioBlob = await assembleBlob(audioSessionId);
+    } catch (e) {
+      console.error("Failed to assemble audio blob:", e);
+      return { success: false, error: "Failed to assemble recording" };
+    }
   }
 
   // Validate blob has actual audio data
@@ -93,6 +102,10 @@ export async function uploadWithRetry(
       formData.append("assessment_token", assessmentToken);
       formData.append("student_name", studentName);
       formData.append("duration_seconds", durationSeconds.toString());
+      if (params.passageId) {
+        formData.append("passage_id", params.passageId);
+        formData.append("passage_index", (params.passageIndex ?? 0).toString());
+      }
 
       const response = await fetch("/api/score", {
         method: "POST",
@@ -102,8 +115,10 @@ export async function uploadWithRetry(
       if (response.ok) {
         const { session_id } = await response.json();
 
-        // Clear IndexedDB on success
-        await clearSession(audioSessionId);
+        // Clear IndexedDB on success (no-op for in-memory recordings)
+        if (!params.audioBlob) {
+          await clearSession(audioSessionId);
+        }
 
         onProgress?.({
           status: "success",
