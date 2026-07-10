@@ -15,6 +15,30 @@ import { getPassageById } from "@/lib/passages/library";
 
 const deepgram = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY! });
 
+// A 3-minute WebM/Opus reading is ~3MB; 25MB is generous headroom while
+// keeping storage/Deepgram spend bounded against abuse of this open endpoint.
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const MAX_DURATION_SECONDS = 10 * 60;
+
+// Best-effort rate limit, keyed by assessment token. Per-instance only on
+// Vercel (no shared store), so it bounds bursts rather than being exact.
+// Keyed per token — not per IP — because a whole class submits from behind
+// one school NAT; the limit must allow a legitimate classroom burst.
+const RATE_WINDOW_MS = 10 * 60 * 1000;
+const MAX_SUBMISSIONS_PER_WINDOW = 100;
+const submissionWindows = new Map<string, { count: number; windowStart: number }>();
+
+function isRateLimited(token: string): boolean {
+  const now = Date.now();
+  const entry = submissionWindows.get(token);
+  if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
+    submissionWindows.set(token, { count: 1, windowStart: now });
+    return false;
+  }
+  entry.count++;
+  return entry.count > MAX_SUBMISSIONS_PER_WINDOW;
+}
+
 /**
  * Extract keyterms from passage text to boost ASR recognition.
  * Focuses on proper nouns and challenging vocabulary.
@@ -258,6 +282,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
+      );
+    }
+
+    if (audioFile.size > MAX_AUDIO_BYTES) {
+      return NextResponse.json(
+        { error: "Audio file too large" },
+        { status: 413 }
+      );
+    }
+
+    if (durationSeconds <= 0 || durationSeconds > MAX_DURATION_SECONDS) {
+      return NextResponse.json(
+        { error: "Invalid recording duration" },
+        { status: 400 }
+      );
+    }
+
+    if (isRateLimited(assessmentToken)) {
+      return NextResponse.json(
+        { error: "Too many submissions for this assessment; try again shortly" },
+        { status: 429 }
       );
     }
 

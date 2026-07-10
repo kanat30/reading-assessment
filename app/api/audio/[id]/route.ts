@@ -1,9 +1,13 @@
 /**
  * Audio streaming route - serves audio from Supabase Storage.
+ *
+ * Student audio is treated as potential biometric data (NYC DOE AI guidance):
+ * only an authenticated teacher of the session's school may fetch it.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(
   request: NextRequest,
@@ -11,17 +15,43 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+
+    // Authenticate the caller as a teacher and resolve their school
+    const authClient = await createClient();
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { data: teacher } = await authClient
+      .from("teachers")
+      .select("school_id")
+      .eq("auth_provider_id", user.id)
+      .single();
+
+    if (!teacher) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Admin client only for data the anon-key client can't reach (storage);
+    // the school check below enforces tenancy.
     const supabase = createAdminClient();
 
-    // Look up session to get audio_url
+    // Look up session to get audio_url and its school
     const { data: session, error: sessionError } = await supabase
       .from("sessions")
-      .select("audio_url")
+      .select("audio_url, assessments!inner(school_id)")
       .eq("id", id)
       .single();
 
     if (sessionError || !session?.audio_url) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sessionAssessment = session.assessments as any;
+    if (sessionAssessment.school_id !== teacher.school_id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     // Download audio from Supabase Storage

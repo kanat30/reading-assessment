@@ -34,6 +34,8 @@ export async function POST(request: NextRequest) {
         id,
         assessment_id,
         passage_id,
+        created_at,
+        scores_json,
         assessments(
           passage_id,
           passages(
@@ -50,6 +52,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Session not found" },
         { status: 404 }
+      );
+    }
+
+    // This endpoint is anonymous (student flow) — the unguessable session id
+    // is the capability. Limit what that capability allows: answers may only
+    // be submitted shortly after the reading, and only once.
+    const SUBMISSION_WINDOW_MS = 2 * 60 * 60 * 1000;
+    const sessionAge = Date.now() - new Date(session.created_at).getTime();
+    if (sessionAge > SUBMISSION_WINDOW_MS) {
+      return NextResponse.json(
+        { error: "Submission window has closed" },
+        { status: 403 }
+      );
+    }
+
+    const existingScores = session.scores_json as Record<string, unknown> | null;
+    if (existingScores?.comprehension) {
+      return NextResponse.json(
+        { error: "Comprehension answers were already submitted for this session" },
+        { status: 409 }
       );
     }
 

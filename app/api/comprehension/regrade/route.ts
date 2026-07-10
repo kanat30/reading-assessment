@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { gradeComprehension } from "@/lib/scoring/comprehension";
 import { ComprehensionQuestion } from "@/lib/scoring/types";
 
@@ -10,6 +11,24 @@ interface PassageData {
 }
 
 export async function POST(request: NextRequest) {
+  // Regrade is a teacher action (report UI button) — require an
+  // authenticated teacher of the session's school.
+  const authClient = await createClient();
+  const { data: { user }, error: authError } = await authClient.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data: teacher } = await authClient
+    .from("teachers")
+    .select("school_id")
+    .eq("auth_provider_id", user.id)
+    .single();
+
+  if (!teacher) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const supabase = createAdminClient();
 
   try {
@@ -30,6 +49,7 @@ export async function POST(request: NextRequest) {
         id,
         assessment_id,
         assessments(
+          school_id,
           passage_id,
           passages(
             id,
@@ -46,6 +66,11 @@ export async function POST(request: NextRequest) {
         { error: "Session not found" },
         { status: 404 }
       );
+    }
+
+    const sessionSchoolId = (session.assessments as unknown as { school_id: string } | null)?.school_id;
+    if (sessionSchoolId !== teacher.school_id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const assessments = session.assessments as unknown as { passage_id: string; passages: PassageData } | null;
