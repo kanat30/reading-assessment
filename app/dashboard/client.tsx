@@ -17,6 +17,7 @@ import {
   ReadingLevel,
   Passage as LibraryPassage,
   getPassageById,
+  getPassagesByLevel,
   detectAssessmentPeriod,
   getAssessmentPeriodLabel,
 } from "@/lib/passages/library";
@@ -78,8 +79,31 @@ interface Session {
   scores_json: SessionScoresJson | null;
   teacher_review_status: ReviewStatus;
   has_note: boolean;
+  passage_id?: string | null;
   students: Student;
   assessments: SessionAssessment;
+}
+
+// Multi-passage library sessions store the actual passage read on the session
+// (passage_id). The assessment's own passages row is only the legacy single-passage
+// fallback, so without this every session of a multi-passage assessment would show the
+// same title. Resolve the real passage from the library when a passage_id is present.
+function resolveSessionPassage<T extends { passage_id?: string | null; assessments: SessionAssessment }>(
+  session: T
+): T {
+  const libraryPassage = session.passage_id ? getPassageById(session.passage_id) : undefined;
+  if (!libraryPassage) return session;
+  return {
+    ...session,
+    assessments: {
+      ...session.assessments,
+      passages: {
+        id: libraryPassage.id,
+        title: libraryPassage.title,
+        grade_band: libraryPassage.grade_content,
+      },
+    },
+  };
 }
 
 interface Teacher {
@@ -499,6 +523,7 @@ export function DashboardClient({
               created_at,
               duration_seconds,
               scores_json,
+              passage_id,
               students(id, first_name, last_name),
               assessments!inner(
                 id,
@@ -512,15 +537,14 @@ export function DashboardClient({
             .single();
 
           if (newSession) {
+            const resolved = resolveSessionPassage(newSession as unknown as Session);
             setSessions((prev) => {
               // Check if session already exists (update) or is new (prepend)
-              const exists = prev.some((s) => s.id === newSession.id);
+              const exists = prev.some((s) => s.id === resolved.id);
               if (exists) {
-                return prev.map((s) =>
-                  s.id === newSession.id ? (newSession as unknown as Session) : s
-                );
+                return prev.map((s) => (s.id === resolved.id ? resolved : s));
               }
-              return [newSession as unknown as Session, ...prev];
+              return [resolved, ...prev];
             });
           }
         }
@@ -542,6 +566,7 @@ export function DashboardClient({
               created_at,
               duration_seconds,
               scores_json,
+              passage_id,
               students(id, first_name, last_name),
               assessments!inner(
                 id,
@@ -555,7 +580,9 @@ export function DashboardClient({
             .order("scored_at", { ascending: false, nullsFirst: false });
 
           if (freshSessions) {
-            setSessions(freshSessions as unknown as Session[]);
+            setSessions(
+              (freshSessions as unknown as Session[]).map(resolveSessionPassage)
+            );
           }
         }, 15000);
       }
@@ -1544,7 +1571,7 @@ export function DashboardClient({
                     >
                       <div className="flex items-center gap-2 mb-1">
                         <p className="text-lg font-medium text-ink">Leveled passage library</p>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-ink text-paper font-medium">
                           New
                         </span>
                       </div>
@@ -1582,18 +1609,39 @@ export function DashboardClient({
                             >
                               <div className="space-y-3 pt-4">
                                 {templates.map((template) => (
-                                  <button
+                                  <div
                                     key={template.id}
-                                    onClick={() => handleSelectTemplate(template)}
-                                    className="w-full text-left p-4 rounded-lg border border-mist hover:border-accent-blue hover:bg-mist/30 transition-colors group"
+                                    className="relative group/template"
                                   >
-                                    <p className="font-medium text-ink group-hover:text-accent-blue">
-                                      {template.name}
-                                    </p>
-                                    <p className="text-sm text-stone mt-1">
-                                      {template.passages.title} · {template.passages.word_count} words
-                                    </p>
-                                  </button>
+                                    <button
+                                      onClick={() => handleSelectTemplate(template)}
+                                      className="w-full text-left p-4 rounded-lg border border-mist hover:border-accent-blue hover:bg-mist/30 transition-colors group"
+                                    >
+                                      <p className="font-medium text-ink group-hover:text-accent-blue">
+                                        {template.name}
+                                      </p>
+                                      <p className="text-sm text-stone mt-1">
+                                        {template.passages.title} · {template.passages.word_count} words
+                                      </p>
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteTemplate(template.id);
+                                      }}
+                                      disabled={deletingTemplateId === template.id}
+                                      className="absolute top-3 right-3 p-1.5 rounded text-stone/50 hover:text-alert hover:bg-alert/10 opacity-0 group-hover/template:opacity-100 transition-all disabled:opacity-50"
+                                      title="Delete template"
+                                    >
+                                      {deletingTemplateId === template.id ? (
+                                        <div className="w-4 h-4 border-2 border-stone/30 border-t-stone rounded-full animate-spin" />
+                                      ) : (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                      )}
+                                    </button>
+                                  </div>
                                 ))}
                               </div>
                             </motion.div>
@@ -1671,7 +1719,18 @@ export function DashboardClient({
 
                     <div className="mt-8 flex justify-end">
                       <button
-                        onClick={() => setCreateStep("passages")}
+                        onClick={() => {
+                          // If count equals available passages, auto-select all and skip selection step
+                          if (selectedReadingLevel !== null) {
+                            const available = getPassagesByLevel(selectedReadingLevel);
+                            if (passageCount === available.length) {
+                              setSelectedPassageIds(available.map(p => p.id));
+                              setCreateStep("label");
+                              return;
+                            }
+                          }
+                          setCreateStep("passages");
+                        }}
                         className="px-6 py-3 bg-accent-blue text-paper rounded-lg font-medium hover:bg-accent-blue/90 transition-colors"
                       >
                         Continue
@@ -1872,12 +1931,22 @@ export function DashboardClient({
                           // If using template, go back to choose
                           setSelectedTemplate(null);
                           setCreateStep("choose");
-                        } else if (selectedPassageIds.length > 0) {
+                        } else if (selectedPassageIds.length > 0 && selectedReadingLevel !== null) {
                           // Using new passage library flow
-                          setCreateStep("passages");
-                        } else {
+                          // Check if we auto-selected (count === available)
+                          const available = getPassagesByLevel(selectedReadingLevel);
+                          if (passageCount === available.length) {
+                            // Was auto-selected, go back to count step
+                            setCreateStep("count");
+                          } else {
+                            // Manual selection, go back to passages step
+                            setCreateStep("passages");
+                          }
+                        } else if (selectedPassage) {
                           // Legacy flow with database passages
                           setCreateStep("questions");
+                        } else {
+                          setCreateStep("choose");
                         }
                       }}
                       className="text-sm text-stone hover:text-ink mb-6"

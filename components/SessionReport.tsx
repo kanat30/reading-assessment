@@ -15,8 +15,9 @@ import { useCountUp } from "@/hooks/useCountUp";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useIntersectionObserver } from "@/hooks/useIntersectionObserver";
 import { SessionEvent, SessionEventOverride, EnhancedErrorPattern, EventType, EventOverrideAction } from "@/lib/scoring/types";
+import { getLastReachedIndex } from "@/lib/scoring/metrics";
 import { SCORE_REVEAL } from "@/lib/animation/constants";
-import { ReadingLevel, AssessmentPeriod } from "@/lib/passages/library";
+import { ReadingLevel, AssessmentPeriod, getPassageById } from "@/lib/passages/library";
 import { calculateBenchmark, BenchmarkResult } from "@/lib/scoring/benchmark";
 
 interface SessionReportProps {
@@ -103,6 +104,46 @@ interface Override {
   teachers: { full_name: string };
 }
 
+// Raw session row shape returned by the report queries (before transform).
+interface RawSessionRow {
+  passage_id?: string | null;
+  scores_json: unknown;
+  students: unknown;
+  assessments: unknown;
+  teacher_review_status: string | null;
+  [key: string]: unknown;
+}
+
+// Normalize a fetched session row into SessionData, resolving the passage that was
+// actually read. Multi-passage library sessions store the specific passage on
+// sessions.passage_id; the assessment's own passages row is only the legacy
+// single-passage fallback. Reading straight from the assessment would show the wrong
+// passage text (and misaligned error highlights) for library sessions.
+function transformSessionRow(row: RawSessionRow): SessionData {
+  const assessments = row.assessments as {
+    passages: PassageData;
+    reading_level: ReadingLevel | null;
+    assessment_period: AssessmentPeriod | null;
+  };
+  const libraryPassage = row.passage_id ? getPassageById(row.passage_id) : undefined;
+  const passages: PassageData = libraryPassage
+    ? {
+        id: libraryPassage.id,
+        title: libraryPassage.title,
+        text: libraryPassage.text,
+        grade_band: libraryPassage.grade_content,
+      }
+    : assessments.passages;
+
+  return {
+    ...(row as unknown as SessionData),
+    students: row.students as StudentData,
+    assessments: { ...assessments, passages },
+    scores_json: row.scores_json as ScoresJson,
+    teacher_review_status: row.teacher_review_status || "unreviewed",
+  };
+}
+
 function getOrdinalSuffix(n: number): string {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
@@ -161,6 +202,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             duration_seconds,
             scores_json,
             teacher_review_status,
+            passage_id,
             students(first_name, last_name),
             assessments(
               passages(id, title, text, grade_band),
@@ -235,18 +277,8 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           .eq("session_id", sessionId)
           .order("word_index", { ascending: true });
 
-        // Transform data
-        const transformedSession = {
-          ...sessionData,
-          students: sessionData.students as unknown as StudentData,
-          assessments: sessionData.assessments as unknown as {
-            passages: PassageData;
-            reading_level: ReadingLevel | null;
-            assessment_period: AssessmentPeriod | null;
-          },
-          scores_json: sessionData.scores_json as ScoresJson,
-          teacher_review_status: sessionData.teacher_review_status || "unreviewed",
-        };
+        // Transform data (resolves the session's actual library passage)
+        const transformedSession = transformSessionRow(sessionData as unknown as RawSessionRow);
 
         const transformedEvents: SessionEvent[] = (eventRows || []).map((e) => ({
           word_index: e.word_index,
@@ -346,7 +378,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
       const { data: updatedSession } = await supabase
         .from("sessions")
         .select(`
-          id, status, created_at, duration_seconds, scores_json, teacher_review_status,
+          id, status, created_at, duration_seconds, scores_json, teacher_review_status, passage_id,
           students(first_name, last_name),
           assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
         `)
@@ -354,17 +386,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         .single();
 
       if (updatedSession) {
-        setSession({
-          ...updatedSession,
-          students: updatedSession.students as unknown as StudentData,
-          assessments: updatedSession.assessments as unknown as {
-            passages: PassageData;
-            reading_level: ReadingLevel | null;
-            assessment_period: AssessmentPeriod | null;
-          },
-          scores_json: updatedSession.scores_json as ScoresJson,
-          teacher_review_status: updatedSession.teacher_review_status || "unreviewed",
-        });
+        setSession(transformSessionRow(updatedSession as unknown as RawSessionRow));
       }
 
       // Refresh overrides
@@ -448,7 +470,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         const { data: updatedSession } = await supabase
           .from("sessions")
           .select(`
-            id, status, created_at, duration_seconds, scores_json, teacher_review_status,
+            id, status, created_at, duration_seconds, scores_json, teacher_review_status, passage_id,
             students(first_name, last_name),
             assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
           `)
@@ -456,17 +478,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           .single();
 
         if (updatedSession) {
-          setSession({
-            ...updatedSession,
-            students: updatedSession.students as unknown as StudentData,
-            assessments: updatedSession.assessments as unknown as {
-              passages: PassageData;
-              reading_level: ReadingLevel | null;
-              assessment_period: AssessmentPeriod | null;
-            },
-            scores_json: updatedSession.scores_json as ScoresJson,
-            teacher_review_status: updatedSession.teacher_review_status || "unreviewed",
-          });
+          setSession(transformSessionRow(updatedSession as unknown as RawSessionRow));
         }
       }
     } catch (err) {
@@ -513,7 +525,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
       const { data: updatedSession } = await supabase
         .from("sessions")
         .select(`
-          id, status, created_at, duration_seconds, scores_json, teacher_review_status,
+          id, status, created_at, duration_seconds, scores_json, teacher_review_status, passage_id,
           students(first_name, last_name),
           assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
         `)
@@ -521,17 +533,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         .single();
 
       if (updatedSession) {
-        setSession({
-          ...updatedSession,
-          students: updatedSession.students as unknown as StudentData,
-          assessments: updatedSession.assessments as unknown as {
-            passages: PassageData;
-            reading_level: ReadingLevel | null;
-            assessment_period: AssessmentPeriod | null;
-          },
-          scores_json: updatedSession.scores_json as ScoresJson,
-          teacher_review_status: updatedSession.teacher_review_status || "unreviewed",
-        });
+        setSession(transformSessionRow(updatedSession as unknown as RawSessionRow));
       }
     } catch (err) {
       console.error("Event override delete error:", err);
@@ -625,11 +627,14 @@ export function SessionReport({ sessionId }: SessionReportProps) {
     .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
     .toLowerCase();
 
-  // Count error types
-  const substitutions = events.filter((e) => e.event_type === "substitution").length;
-  const omissions = events.filter((e) => e.event_type === "omission").length;
-  const mispronunciations = events.filter((e) => e.event_type === "mispronunciation").length;
-  const selfCorrections = events.filter((e) => e.event_type === "self_correction").length;
+  // Count error types — only within the portion the student actually reached in the
+  // timed sample. Trailing never-reached words are not errors (see getLastReachedIndex).
+  const lastReachedIndex = getLastReachedIndex(events);
+  const reached = (e: SessionEvent) => e.word_index <= lastReachedIndex;
+  const substitutions = events.filter((e) => reached(e) && e.event_type === "substitution").length;
+  const omissions = events.filter((e) => reached(e) && e.event_type === "omission").length;
+  const mispronunciations = events.filter((e) => reached(e) && e.event_type === "mispronunciation").length;
+  const selfCorrections = events.filter((e) => reached(e) && e.event_type === "self_correction").length;
 
   const hasComprehension = comprehension && comprehension.total > 0;
 

@@ -1,4 +1,5 @@
 import { SessionEvent } from "./types";
+import { getLastReachedIndex } from "./metrics";
 
 /**
  * Enhanced error pattern interface for Week 5
@@ -103,11 +104,16 @@ export function computeErrorPatterns(events: SessionEvent[]): EnhancedErrorPatte
   const patterns: EnhancedErrorPattern[] = [];
   const usedEventIndices = new Set<number>();
 
+  // Ignore words the student never reached in the timed sample — they are not
+  // errors and would otherwise flood the patterns with the unread tail of the passage.
+  const lastReached = getLastReachedIndex(events);
+  const reached = (e: SessionEvent) => e.word_index <= lastReached;
+
   // Filter to error events (substitution, omission, mispronunciation) and self-corrections
   const errorEvents = events.filter(e =>
-    ["substitution", "omission", "mispronunciation"].includes(e.event_type)
+    reached(e) && ["substitution", "omission", "mispronunciation"].includes(e.event_type)
   );
-  const selfCorrectionEvents = events.filter(e => e.event_type === "self_correction");
+  const selfCorrectionEvents = events.filter(e => reached(e) && e.event_type === "self_correction");
 
   // ============================================
   // Pattern 1: Multisyllabic words (3+ syllables)

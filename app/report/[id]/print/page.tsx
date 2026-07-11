@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getPassageById } from "@/lib/passages/library";
 import { PrintReport } from "@/components/PrintReport";
 
 interface PrintPageProps {
@@ -18,6 +19,7 @@ export default async function PrintPage({ params }: PrintPageProps) {
       created_at,
       duration_seconds,
       scores_json,
+      passage_id,
       students(first_name, last_name),
       assessments(
         class_label,
@@ -46,18 +48,31 @@ export default async function PrintPage({ params }: PrintPageProps) {
 
   // Transform nested data - Supabase returns single objects for to-one relations
   // but TypeScript may see them as arrays
+  const assessments = session.assessments as unknown as {
+    class_label: string;
+    passages: { title: string; text: string; grade_band: string };
+    teachers: { full_name: string };
+    schools: { name: string };
+  };
+
+  // Resolve the passage actually read this session (library flow stores it on the
+  // session; the assessment's passages row is only the legacy fallback).
+  const libraryPassage = session.passage_id ? getPassageById(session.passage_id) : undefined;
+  if (libraryPassage) {
+    assessments.passages = {
+      title: libraryPassage.title,
+      text: libraryPassage.text,
+      grade_band: libraryPassage.grade_content,
+    };
+  }
+
   const transformedSession = {
     id: session.id,
     created_at: session.created_at,
     duration_seconds: session.duration_seconds,
     scores_json: session.scores_json,
     students: session.students as unknown as { first_name: string; last_name: string },
-    assessments: session.assessments as unknown as {
-      class_label: string;
-      passages: { title: string; text: string; grade_band: string };
-      teachers: { full_name: string };
-      schools: { name: string };
-    },
+    assessments,
   };
 
   return (

@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { EnhancedErrorPattern } from "@/lib/scoring/patterns";
+import { getLastReachedIndex } from "@/lib/scoring/metrics";
 
 interface PrintReportProps {
   session: {
@@ -79,9 +80,15 @@ export function PrintReport({ session, events }: PrintReportProps) {
     return () => clearTimeout(timer);
   }, []);
 
-  // Build transcript with error highlighting
+  // Build transcript with error highlighting. The read is a fixed 60s sample, so
+  // only show/score up to the last word the student actually reached — the trailing
+  // never-reached words are not errors (see getLastReachedIndex).
   const passageWords = passage.text.split(/\s+/);
   const eventMap = new Map(events.map((e) => [e.word_index, e]));
+  const lastReachedIndex = getLastReachedIndex(events);
+  const hasUnreached = lastReachedIndex >= 0 && lastReachedIndex < passageWords.length - 1;
+  const reachedWords = hasUnreached ? passageWords.slice(0, lastReachedIndex + 1) : passageWords;
+  const notReachedCount = passageWords.length - reachedWords.length;
 
   return (
     <>
@@ -221,7 +228,7 @@ export function PrintReport({ session, events }: PrintReportProps) {
             Reading Transcript
           </h2>
           <p className="text-sm text-black leading-relaxed print:text-[10pt] print:leading-normal">
-            {passageWords.map((word, idx) => {
+            {reachedWords.map((word, idx) => {
               const event = eventMap.get(idx);
               const isError =
                 event &&
@@ -239,6 +246,11 @@ export function PrintReport({ session, events }: PrintReportProps) {
 
               return <span key={idx}>{word} </span>;
             })}
+            {hasUnreached && (
+              <span className="text-gray-400 italic">
+                {" "}— read {reachedWords.length} of {passageWords.length} words in the timed sample; {notReachedCount} not reached —
+              </span>
+            )}
           </p>
           <p className="text-xs text-gray-500 mt-2 print:text-[8pt]">
             Bold/underlined words indicate errors (substitutions, omissions, or unclear pronunciation).

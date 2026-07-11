@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { SessionEvent, SessionEventOverride, EventType, EventOverrideAction } from "@/lib/scoring/types";
+import { getLastReachedIndex } from "@/lib/scoring/metrics";
 import { WordOverridePopover } from "./WordOverridePopover";
 
 interface SyncedTranscriptProps {
@@ -40,7 +41,16 @@ export function SyncedTranscript({
 }: SyncedTranscriptProps) {
   const words = useMemo(() => passageText.split(/\s+/), [passageText]);
   const [activeWordIndex, setActiveWordIndex] = useState<number | null>(null);
+  const [showUnreached, setShowUnreached] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // The 60-second sample usually stops partway through the passage. Everything after
+  // the last word the student actually reached was never attempted — show it as a
+  // collapsed remainder, not as a run of red "errors".
+  const lastReachedIndex = useMemo(() => getLastReachedIndex(events), [events]);
+  const hasUnreached = lastReachedIndex >= 0 && lastReachedIndex < words.length - 1;
+  const reachedCount = lastReachedIndex + 1;
+  const notReachedCount = words.length - reachedCount;
 
   // Popover state
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -281,10 +291,15 @@ export function SyncedTranscript({
   const selectedEvent = selectedWordIndex !== null ? eventMap.get(selectedWordIndex) || null : null;
   const selectedOverride = selectedWordIndex !== null ? overrideMap.get(selectedWordIndex) || null : null;
 
+  // The words the student actually reached (scored + interactive)
+  const reachedWords = hasUnreached ? words.slice(0, reachedCount) : words;
+  // The trailing words never reached in the timed sample (context only, not errors)
+  const unreachedWords = hasUnreached ? words.slice(reachedCount) : [];
+
   return (
     <div ref={containerRef} className="overflow-hidden">
       <p className="font-serif text-xl leading-relaxed break-words">
-        {words.map((word, index) => (
+        {reachedWords.map((word, index) => (
           <span
             key={index}
             data-word-index={index}
@@ -296,6 +311,33 @@ export function SyncedTranscript({
           </span>
         ))}
       </p>
+
+      {/* Timed-sample cutoff: where the student ran out of the 60 seconds */}
+      {hasUnreached && (
+        <div className="flex items-center gap-3 my-6 select-none">
+          <div className="flex-1 border-t border-mist/50" />
+          <button
+            type="button"
+            onClick={() => setShowUnreached((v) => !v)}
+            className="text-xs text-stone hover:text-ink transition-colors whitespace-nowrap"
+            title="Words after this point were not reached in the 60-second sample and are not scored."
+          >
+            read {reachedCount} of {words.length} words · {notReachedCount} not reached
+            <span className="text-mist"> · </span>
+            <span className="underline underline-offset-2">{showUnreached ? "hide" : "show"}</span>
+          </button>
+          <div className="flex-1 border-t border-mist/50" />
+        </div>
+      )}
+
+      {/* Never-reached remainder: muted, non-interactive, no error styling */}
+      {hasUnreached && showUnreached && (
+        <p className="font-serif text-xl leading-relaxed break-words text-stone/50">
+          {unreachedWords.map((word, i) => (
+            <span key={reachedCount + i}>{word} </span>
+          ))}
+        </p>
+      )}
 
       {/* Override Popover */}
       {onOverrideSave && onOverrideDelete && (

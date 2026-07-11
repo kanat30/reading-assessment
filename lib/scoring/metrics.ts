@@ -9,25 +9,48 @@ const NORMS = {
   percentile_10: 89,
 };
 
+/**
+ * Index of the last passage word the student actually reached (voiced) within the
+ * timed sample. Words after this index were never attempted — the read simply ran
+ * out of time. In ORF scoring those "not reached" words are NOT errors: they are
+ * excluded from WCPM, accuracy, error patterns, and the transcript's error styling.
+ *
+ * A word counts as reached if it was voiced (has a spoken word). A mid-passage skip
+ * (an omission that still has voiced words after it) is a genuine error and stays
+ * counted — only the trailing run of never-voiced words is treated as not reached.
+ * Returns -1 if nothing was voiced.
+ */
+export function getLastReachedIndex(
+  events: ReadonlyArray<{ word_index: number; spoken_word: string | null; event_type: string }>
+): number {
+  let last = -1;
+  for (const event of events) {
+    if (
+      event.spoken_word !== null &&
+      event.event_type !== "insertion" &&
+      event.word_index > last
+    ) {
+      last = event.word_index;
+    }
+  }
+  return last;
+}
+
 export function calculateMetrics(
   events: SessionEvent[],
   durationSeconds: number
 ): ScoringMetrics {
-  // Find where the student stopped reading (last non-omission event)
-  let lastAttemptedIndex = -1;
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].event_type !== "omission") {
-      lastAttemptedIndex = i;
-      break;
-    }
-  }
+  // Only score up to the last word the student actually reached; trailing
+  // never-reached words are excluded (they are not errors).
+  const lastAttemptedIndex = getLastReachedIndex(events);
 
   // Count correct words (correct + self_correction count as correct per Hasbrouck-Tindal)
   let correctWords = 0;
   let totalWordsAttempted = 0;
 
-  for (let i = 0; i <= lastAttemptedIndex; i++) {
-    const event = events[i];
+  for (const event of events) {
+    if (event.event_type === "insertion") continue;
+    if (event.word_index > lastAttemptedIndex) continue; // not reached
     totalWordsAttempted++;
     if (event.event_type === "correct" || event.event_type === "self_correction") {
       correctWords++;

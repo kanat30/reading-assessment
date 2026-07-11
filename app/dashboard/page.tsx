@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getPassageById } from "@/lib/passages/library";
 import { DashboardClient } from "./client";
 
 export default async function DashboardPage() {
@@ -44,6 +45,7 @@ export default async function DashboardPage() {
         duration_seconds,
         scores_json,
         teacher_review_status,
+        passage_id,
         students(id, first_name, last_name),
         assessments!inner(
           id,
@@ -116,18 +118,33 @@ export default async function DashboardPage() {
     return status as "new" | "reviewed" | "approved" | "flagged" | "edited";
   };
 
-  const transformedSessions = (sessions || []).map((s) => ({
-    ...s,
-    teacher_review_status: mapReviewStatus(s.teacher_review_status),
-    has_note: sessionIdsWithNotes.has(s.id),
-    students: s.students as unknown as { id: string; first_name: string; last_name: string },
-    assessments: s.assessments as unknown as {
+  const transformedSessions = (sessions || []).map((s) => {
+    const assessment = s.assessments as unknown as {
       id: string;
       class_label: string;
       school_id: string;
       passages: { id: string; title: string; grade_band: string };
-    },
-  }));
+    };
+    // Multi-passage library sessions store the actual passage on the session; the
+    // assessment's passages row is only the legacy single-passage fallback, so all
+    // sessions of a multi-passage assessment would otherwise show the same title.
+    const libraryPassageId = (s as { passage_id?: string | null }).passage_id;
+    const libraryPassage = libraryPassageId ? getPassageById(libraryPassageId) : undefined;
+    if (libraryPassage) {
+      assessment.passages = {
+        id: libraryPassage.id,
+        title: libraryPassage.title,
+        grade_band: libraryPassage.grade_content,
+      };
+    }
+    return {
+      ...s,
+      teacher_review_status: mapReviewStatus(s.teacher_review_status),
+      has_note: sessionIdsWithNotes.has(s.id),
+      students: s.students as unknown as { id: string; first_name: string; last_name: string },
+      assessments: assessment,
+    };
+  });
 
   // Transform templates to match expected types
   const transformedTemplates = (templates || []).map((t) => ({
