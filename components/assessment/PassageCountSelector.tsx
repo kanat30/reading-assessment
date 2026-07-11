@@ -47,23 +47,23 @@ export function PassageCountSelector({ value, onChange }: PassageCountSelectorPr
               className={`
                 relative text-left p-4 rounded-lg border-2 transition-all
                 ${isSelected
-                  ? "border-blue-500 bg-blue-50"
+                  ? "border-[#171717] bg-[#171717]/10"
                   : "border-neutral-200 hover:border-neutral-300 bg-white"
                 }
               `}
             >
               <div className="flex flex-col">
                 <div className="flex items-center gap-2">
-                  <span className={`text-2xl font-bold ${isSelected ? "text-blue-700" : "text-neutral-900"}`}>
+                  <span className={`text-2xl font-bold ${isSelected ? "text-[#171717]" : "text-neutral-900"}`}>
                     {option.count}
                   </span>
                   {option.recommended && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#171717]/15 text-[#171717] font-medium">
                       Recommended
                     </span>
                   )}
                 </div>
-                <div className={`text-sm mt-1 ${isSelected ? "text-blue-600" : "text-neutral-500"}`}>
+                <div className={`text-sm mt-1 ${isSelected ? "text-[#525252]" : "text-neutral-500"}`}>
                   {option.description}
                 </div>
               </div>
@@ -72,7 +72,7 @@ export function PassageCountSelector({ value, onChange }: PassageCountSelectorPr
               {isSelected && (
                 <motion.div
                   layoutId="count-selection"
-                  className="absolute top-2 right-2 w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center"
+                  className="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#171717] flex items-center justify-center"
                   initial={false}
                 >
                   <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -90,7 +90,7 @@ export function PassageCountSelector({ value, onChange }: PassageCountSelectorPr
       </div>
 
       {value === 3 && (
-        <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-800">
+        <div className="p-3 bg-neutral-100 rounded-lg border border-neutral-200 text-sm text-neutral-700">
           <strong>Median scoring:</strong> The middle WCPM of 3 passages is used for benchmarking.
           This follows the Acadience/DIBELS protocol for more reliable fluency measurement.
         </div>

@@ -14,7 +14,8 @@
   --color-paper: hsl(50 20% 98%);
   --color-mist: hsl(50 10% 94%);
   --color-stone: hsl(40 2% 44%);
-  --color-accent-blue: hsl(224 69% 40%);
+  /* Primary action accent — monochrome "soft black" (was blue hsl(224 69% 40%)) */
+  --color-accent-blue: hsl(0 0% 9%);
   --color-success: hsl(145 33% 37%);
   --color-warning: hsl(28 52% 51%);
   --color-alert: hsl(0 45% 44%);
@@ -60,7 +61,7 @@
   --paper: hsl(50 20% 98%);
   --mist: hsl(50 10% 94%);
   --stone: hsl(40 2% 44%);
-  --accent-blue: hsl(224 69% 40%);
+  --accent-blue: hsl(0 0% 9%);
   --success: hsl(145 33% 37%);
   --warning: hsl(28 52% 51%);
   --alert: hsl(0 45% 44%);
@@ -72,7 +73,7 @@
   --card-foreground: hsl(0 0% 4%);
   --popover: hsl(50 20% 98%);
   --popover-foreground: hsl(0 0% 4%);
-  --primary: hsl(224 69% 40%);
+  --primary: hsl(0 0% 9%);
   --primary-foreground: hsl(50 20% 98%);
   --secondary: hsl(50 10% 94%);
   --secondary-foreground: hsl(0 0% 4%);
@@ -83,7 +84,7 @@
   --destructive: hsl(0 45% 44%);
   --border: hsl(50 10% 94%);
   --input: hsl(50 10% 94%);
-  --ring: hsl(224 69% 40%);
+  --ring: hsl(0 0% 9%);
   --radius: 0.5rem;
 }
 

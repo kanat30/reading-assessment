@@ -64,6 +64,14 @@ interface RecordingPageProps {
 
 const STUDENT_NAME_KEY = "fs:student-name";
 
+// Standard ORF protocol: each passage is a fixed ~60-second timed read.
+// WCPM is scored against Hasbrouck–Tindal norms, which are calibrated on a
+// 60-second sample, so the read is capped and auto-stopped at this limit
+// rather than running until the student taps stop.
+const READ_TIME_LIMIT_SECONDS = 60;
+// Show a calm "almost done" cue only in the final stretch of the read.
+const ALMOST_DONE_SECONDS = 10;
+
 function RecordingContent({ token }: { token: string }) {
   const router = useRouter();
   const supabase = createClient();
@@ -102,12 +110,6 @@ function RecordingContent({ token }: { token: string }) {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
 
   // Start monitoring audio levels to show visual feedback
   const startAudioLevelMonitoring = (stream: MediaStream) => {
@@ -504,6 +506,17 @@ function RecordingContent({ token }: { token: string }) {
     await performUpload();
   };
 
+  // Auto-stop the read at the fixed time limit. Runs each render so it always
+  // closes over the current state — the app enforces the ~60s ORF window
+  // instead of relying on the student to tap stop. handleStop is idempotent
+  // (it early-returns once state leaves "recording"), so this fires once.
+  useEffect(() => {
+    if (state === "recording" && elapsedTime >= READ_TIME_LIMIT_SECONDS) {
+      handleStop();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, elapsedTime]);
+
   function navigateToComprehension(sessionId: string) {
     playTick();
     const searchParams = new URLSearchParams({
@@ -687,6 +700,12 @@ function RecordingContent({ token }: { token: string }) {
   // Use currentPassage which handles both library and database passages
   const passage = currentPassage;
 
+  // Calm time-remaining state for the recording bar (depletes toward 0).
+  const secondsLeft = Math.max(0, READ_TIME_LIMIT_SECONDS - elapsedTime);
+  const timeLeftPercent = (secondsLeft / READ_TIME_LIMIT_SECONDS) * 100;
+  const isAlmostDone =
+    state === "recording" && secondsLeft <= ALMOST_DONE_SECONDS;
+
   return (
     <div className="min-h-screen bg-paper flex flex-col">
       {/* Countdown overlay */}
@@ -858,24 +877,53 @@ function RecordingContent({ token }: { token: string }) {
               exit={{ opacity: 0 }}
               className="flex flex-col items-center py-6 px-6"
             >
-              {/* Timer and audio level */}
-              <div className="flex items-center gap-3 mb-4">
-                <p className="text-sm text-stone font-mono">
-                  {formatTime(elapsedTime)}
-                </p>
-                {/* Audio level indicator */}
-                <div className="flex items-center gap-0.5 h-4">
-                  {[0.1, 0.2, 0.35, 0.5, 0.7].map((threshold, i) => (
-                    <div
-                      key={i}
-                      className={`w-1 rounded-full transition-all ${
-                        audioLevel > threshold
-                          ? "bg-success"
-                          : "bg-mist"
-                      }`}
-                      style={{ height: `${8 + i * 3}px` }}
-                    />
-                  ))}
+              {/* Calm time-remaining bar — no ticking numbers. It quietly
+                  depletes and the read auto-stops when it reaches the end. */}
+              <div className="w-full max-w-[280px] mb-4">
+                <div className="h-1.5 rounded-full bg-mist overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${
+                      isAlmostDone ? "bg-warning" : "bg-accent-blue"
+                    }`}
+                    style={{ width: `${timeLeftPercent}%` }}
+                  />
+                </div>
+                <div className="h-4 mt-2 flex items-center justify-center gap-2">
+                  {/* Audio level indicator — quiet reassurance the mic hears them */}
+                  <div className="flex items-center gap-0.5 h-4">
+                    {[0.1, 0.2, 0.35, 0.5, 0.7].map((threshold, i) => (
+                      <div
+                        key={i}
+                        className={`w-1 rounded-full transition-all ${
+                          audioLevel > threshold ? "bg-success" : "bg-mist"
+                        }`}
+                        style={{ height: `${8 + i * 3}px` }}
+                      />
+                    ))}
+                  </div>
+                  {isAlmostDone && (
+                    <motion.span
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-xs text-warning flex items-center gap-1.5"
+                    >
+                      {secondsLeft <= 5 ? (
+                        <>
+                          <motion.span
+                            key={secondsLeft}
+                            initial={{ scale: 1.3, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            className="font-mono font-medium"
+                          >
+                            {secondsLeft}
+                          </motion.span>
+                          <span>sec</span>
+                        </>
+                      ) : (
+                        "Wrapping up..."
+                      )}
+                    </motion.span>
+                  )}
                 </div>
               </div>
 
@@ -900,7 +948,7 @@ function RecordingContent({ token }: { token: string }) {
               </button>
 
               <p className="mt-4 text-base text-ink font-medium">
-                Tap when finished
+                Tap if you finish early
               </p>
             </motion.div>
           )}

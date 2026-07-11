@@ -1,7 +1,6 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import { motion } from "framer-motion";
 import { Suspense, use, useEffect, useState } from "react";
 import { AnimatedCheckmark } from "@/components/AnimatedCheckmark";
@@ -18,7 +17,6 @@ interface DonePageProps {
 function DoneContent({ token }: { token: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const sessionId = searchParams.get("s");
   const passageIndex = parseInt(searchParams.get("pi") || "0", 10);
   const totalPassages = parseInt(searchParams.get("tp") || "1", 10);
 
@@ -86,7 +84,7 @@ function DoneContent({ token }: { token: string }) {
           <Button
             onClick={handleContinue}
             disabled={isTransitioning}
-            className="w-full bg-ink text-paper hover:bg-ink/90 rounded-xl py-6 text-lg font-medium"
+            className="w-full bg-accent-blue text-paper hover:bg-accent-blue/90 rounded-xl py-6 text-lg font-medium"
           >
             {isTransitioning ? (
               <span className="flex items-center gap-2">
@@ -148,16 +146,6 @@ function DoneContent({ token }: { token: string }) {
         <p className="text-stone">
           You can close this tab now.
         </p>
-
-        {/* Report link for testing - teachers access reports via dashboard */}
-        {sessionId && (
-          <Link
-            href={`/report/${sessionId}`}
-            className="mt-8 inline-block text-sm text-accent-blue hover:underline transition-opacity cursor-pointer"
-          >
-            View report
-          </Link>
-        )}
       </motion.div>
     </motion.div>
   );

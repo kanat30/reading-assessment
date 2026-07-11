@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ReadingLevel, Passage, getPassagesByLevel } from "@/lib/passages/library";
+import { ReadingLevel, getPassagesByLevel } from "@/lib/passages/library";
 
 interface PassageSelectorProps {
   level: ReadingLevel;
@@ -54,7 +54,7 @@ export function PassageSelector({ level, maxSelections, selected, onChange }: Pa
               className={`
                 relative w-full text-left p-4 rounded-lg border-2 transition-all
                 ${isSelected
-                  ? "border-blue-500 bg-blue-50"
+                  ? "border-[#171717] bg-[#171717]/10"
                   : disabled
                     ? "border-neutral-100 bg-neutral-50 opacity-50 cursor-not-allowed"
                     : "border-neutral-200 hover:border-neutral-300 bg-white cursor-pointer"
@@ -63,62 +63,53 @@ export function PassageSelector({ level, maxSelections, selected, onChange }: Pa
             >
               {/* Selection number badge */}
               {isSelected && maxSelections > 1 && (
-                <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-blue-500 text-white text-sm font-bold flex items-center justify-center shadow">
+                <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-[#171717] text-white text-sm font-bold flex items-center justify-center shadow">
                   {selectionIndex + 1}
                 </div>
               )}
 
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`font-semibold ${isSelected ? "text-blue-700" : "text-neutral-900"}`}>
-                      {passage.title}
-                    </span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      passage.form === "A" ? "bg-purple-100 text-purple-700" :
-                      passage.form === "B" ? "bg-teal-100 text-teal-700" :
-                      "bg-amber-100 text-amber-700"
-                    }`}>
+                  <h3 className={`font-semibold leading-snug ${isSelected ? "text-[#171717]" : "text-neutral-900"}`}>
+                    {passage.title}
+                  </h3>
+                  <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mt-2">
+                    <span className="text-xs font-medium px-1.5 py-0.5 rounded whitespace-nowrap bg-neutral-100 text-neutral-600">
                       Form {passage.form}
                     </span>
-                  </div>
-                  <div className="text-sm text-neutral-500 mt-1">
-                    {passage.word_count} words · {passage.lexile}L · {passage.genre}
-                  </div>
-                  <div className="text-sm text-neutral-400 mt-1 line-clamp-2">
-                    {passage.text.slice(0, 150)}...
+                    <span className="text-sm text-neutral-500">
+                      {passage.word_count} words · {passage.lexile}L · {passage.genre}
+                    </span>
+                    {passage.themes.slice(0, 2).map((theme) => (
+                      <span
+                        key={theme}
+                        className="text-xs px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-500 capitalize whitespace-nowrap"
+                      >
+                        {theme}
+                      </span>
+                    ))}
                   </div>
                 </div>
 
-                {/* Themes */}
-                <div className="flex flex-wrap gap-1 justify-end max-w-[120px]">
-                  {passage.themes.slice(0, 2).map((theme) => (
-                    <span
-                      key={theme}
-                      className="text-xs px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600 capitalize"
+                {/* Selection indicator — reserved column so it never overlaps content */}
+                <div className="w-5 shrink-0 flex justify-end">
+                  {isSelected && (
+                    <motion.div
+                      className="w-5 h-5 rounded-full bg-[#171717] flex items-center justify-center"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
                     >
-                      {theme}
-                    </span>
-                  ))}
+                      <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path
+                          fillRule="evenodd"
+                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    </motion.div>
+                  )}
                 </div>
               </div>
-
-              {/* Selection indicator */}
-              {isSelected && (
-                <motion.div
-                  className="absolute top-3 right-3 w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                >
-                  <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </motion.div>
-              )}
             </motion.button>
           );
         })}
@@ -131,7 +122,7 @@ export function PassageSelector({ level, maxSelections, selected, onChange }: Pa
       )}
 
       {selected.length === maxSelections && (
-        <div className="p-3 bg-green-50 rounded-lg border border-green-200 text-sm text-green-800">
+        <div className="p-3 bg-neutral-100 rounded-lg border border-neutral-200 text-sm text-neutral-700">
           <strong>Ready to continue!</strong> You&apos;ve selected all {maxSelections} passages.
           {maxSelections === 3 && " Students will read them in the order shown (1, 2, 3)."}
         </div>
