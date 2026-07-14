@@ -9,31 +9,59 @@ const NORMS = {
   percentile_10: 89,
 };
 
+// A student reads one contiguous chunk of the passage and then goes silent, so
+// once they truly stop there should be no more voiced words. But the aligner can
+// still attach a stray match past the stop point — most often when the word the
+// student stopped on repeats later in the passage (see the earliest-match bias in
+// alignment.ts), or when a handful of common words in the skipped remainder happen
+// to match. Left unchecked, that stray match teleports the stop point forward and
+// marks the whole intervening passage as read-but-omitted, corrupting WCPM,
+// accuracy, and the bands. GAP_THRESHOLD is the largest run of never-voiced words
+// we still treat as an in-read skip; a bigger silent gap followed only by a sparse
+// TAIL_TOLERANCE of voiced words is treated as the stray tail after the real stop.
+const NOT_REACHED_GAP_THRESHOLD = 12;
+const NOT_REACHED_TAIL_TOLERANCE = 3;
+
 /**
  * Index of the last passage word the student actually reached (voiced) within the
  * timed sample. Words after this index were never attempted — the read simply ran
  * out of time. In ORF scoring those "not reached" words are NOT errors: they are
  * excluded from WCPM, accuracy, error patterns, and the transcript's error styling.
  *
- * A word counts as reached if it was voiced (has a spoken word). A mid-passage skip
- * (an omission that still has voiced words after it) is a genuine error and stays
- * counted — only the trailing run of never-voiced words is treated as not reached.
- * Returns -1 if nothing was voiced.
+ * A word counts as reached if it was voiced (has a spoken word). A genuine
+ * mid-passage skip — a run of omissions the student then keeps reading past (a
+ * substantial voiced run follows) — stays counted as errors. Only a large silent
+ * gap followed by a stray, sparse tail of voiced words is treated as the aligner
+ * mis-attaching a match past where the student actually stopped; in that case the
+ * stop point is the end of the leading contiguous read. Returns -1 if nothing was
+ * voiced.
  */
 export function getLastReachedIndex(
   events: ReadonlyArray<{ word_index: number; spoken_word: string | null; event_type: string }>
 ): number {
-  let last = -1;
+  const voiced: number[] = [];
   for (const event of events) {
-    if (
-      event.spoken_word !== null &&
-      event.event_type !== "insertion" &&
-      event.word_index > last
-    ) {
-      last = event.word_index;
+    if (event.spoken_word !== null && event.event_type !== "insertion") {
+      voiced.push(event.word_index);
     }
   }
-  return last;
+  if (voiced.length === 0) return -1;
+  voiced.sort((a, b) => a - b);
+
+  // Cut at the first large silent gap whose remaining voiced words are only a
+  // sparse tail (the stray post-stop matches). A big gap followed by substantial
+  // continued reading is a real skip and is left intact.
+  for (let k = 0; k < voiced.length - 1; k++) {
+    const gap = voiced[k + 1] - voiced[k] - 1;
+    if (gap >= NOT_REACHED_GAP_THRESHOLD) {
+      const remainingAfterGap = voiced.length - (k + 1);
+      if (remainingAfterGap <= NOT_REACHED_TAIL_TOLERANCE) {
+        return voiced[k];
+      }
+    }
+  }
+
+  return voiced[voiced.length - 1];
 }
 
 export function calculateMetrics(

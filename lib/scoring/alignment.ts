@@ -57,17 +57,26 @@ export function alignWords(
   let j = m;
 
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0) {
-      const match =
-        normalizedExpected[i - 1] === normalizedSpoken[j - 1] ? MATCH : MISMATCH;
-      if (dp[i][j] === dp[i - 1][j - 1] + match) {
-        alignment.unshift({ expectedIdx: i - 1, spokenIdx: j - 1 });
-        i--;
-        j--;
-        continue;
-      }
-    }
-    if (i > 0 && dp[i][j] === dp[i - 1][j] + GAP) {
+    const canDiag = i > 0 && j > 0;
+    const isMatch =
+      canDiag && normalizedExpected[i - 1] === normalizedSpoken[j - 1];
+    const diagOptimal =
+      canDiag && dp[i][j] === dp[i - 1][j - 1] + (isMatch ? MATCH : MISMATCH);
+    const upOptimal = i > 0 && dp[i][j] === dp[i - 1][j] + GAP;
+
+    // Earliest-match bias: when a diagonal MATCH ties with skipping the expected
+    // word (an omission), prefer the omission. This only ever ties when the spoken
+    // word also matches an *earlier* passage position — i.e. a repeated word — so
+    // it attaches the match to the earliest occurrence and keeps the read
+    // contiguous. Without this, a student who stops on a repeated word (e.g. the
+    // first "construction") has their last word snapped to a later copy, marking
+    // the whole passage in between as read-but-omitted and inflating the stop
+    // point. A genuine substitution is a diagonal MISMATCH, so it is unaffected.
+    if (diagOptimal && !(isMatch && upOptimal)) {
+      alignment.unshift({ expectedIdx: i - 1, spokenIdx: j - 1 });
+      i--;
+      j--;
+    } else if (upOptimal) {
       alignment.unshift({ expectedIdx: i - 1, spokenIdx: null });
       i--;
     } else {
