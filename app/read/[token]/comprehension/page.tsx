@@ -5,8 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { playTick, playChime } from "@/lib/audio/sounds";
-import { createClient } from "@/lib/supabase/browser";
-import { getPassageById } from "@/lib/passages/library";
 
 interface Question {
   id: string;
@@ -31,7 +29,6 @@ function ComprehensionContent({ token }: { token: string }) {
   const sessionId = searchParams.get("s");
   const passageIndex = parseInt(searchParams.get("pi") || "0", 10);
   const totalPassages = parseInt(searchParams.get("tp") || "1", 10);
-  const supabase = createClient();
 
   const [state, setState] = useState<"loading" | "ready" | "submitting" | "error">("loading");
   const [passage, setPassage] = useState<Passage | null>(null);
@@ -55,103 +52,41 @@ function ComprehensionContent({ token }: { token: string }) {
         return;
       }
 
-      // Get session with passage info - both library and legacy fields
-      const { data: session, error: sessionError } = await supabase
-        .from("sessions")
-        .select(`
-          passage_id,
-          assessments(
-            passage_id,
-            passage_ids,
-            passages(id, title, text)
-          )
-        `)
-        .eq("id", sessionId)
-        .single();
+      // Passage + questions come from a bounded server route (admin client)
+      // so the student flow needs no anonymous read access to `sessions`.
+      try {
+        const res = await fetch(
+          `/api/comprehension?session_id=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token)}`
+        );
 
-      if (sessionError || !session) {
-        console.error("Error loading session:", sessionError);
-        router.replace(buildDoneUrl());
-        return;
-      }
-
-      // Extract assessment from nested relations
-      const assessments = session.assessments as unknown as {
-        passage_id: string | null;
-        passage_ids: string[] | null;
-        passages: Passage | null;
-      } | null;
-
-      let passageData: Passage | null = null;
-      let passageIdForQuestions: string | null = null;
-
-      // Check for library passage first (session.passage_id is the library passage ID)
-      if (session.passage_id) {
-        const libraryPassage = getPassageById(session.passage_id);
-        if (libraryPassage) {
-          passageData = {
-            id: libraryPassage.id,
-            title: libraryPassage.title,
-            text: libraryPassage.text,
-          };
-          passageIdForQuestions = libraryPassage.id;
-        }
-      }
-      // Fall back to legacy database passage
-      else if (assessments?.passages) {
-        passageData = assessments.passages;
-        passageIdForQuestions = assessments.passages.id;
-      }
-
-      if (!passageData) {
-        // No passage found, skip to done
-        router.replace(buildDoneUrl());
-        return;
-      }
-
-      setPassage(passageData);
-
-      // For library passages, questions are embedded in the passage
-      // For DB passages, fetch from passage_questions table
-      if (session.passage_id) {
-        // Library passage - get questions from passage object
-        const libraryPassage = getPassageById(session.passage_id);
-        if (libraryPassage?.questions && libraryPassage.questions.length > 0) {
-          const formattedQuestions: Question[] = libraryPassage.questions.map((q, idx) => ({
-            id: `lib-${session.passage_id}-${idx}`,
-            question: q.question,
-            question_type: q.type,
-            display_order: idx,
-          }));
-          setQuestions(formattedQuestions);
-          setState("ready");
-          return;
-        } else {
-          // No questions for this library passage, skip to done
+        if (!res.ok) {
           router.replace(buildDoneUrl());
           return;
         }
-      }
 
-      // Legacy DB passage - fetch questions from database
-      const { data: questionRows, error: questionsError } = await supabase
-        .from("passage_questions")
-        .select("id, question, question_type, display_order")
-        .eq("passage_id", passageIdForQuestions)
-        .order("display_order", { ascending: true });
+        const data = (await res.json()) as {
+          passage: Passage | null;
+          questions: Question[];
+        };
 
-      if (questionsError || !questionRows || questionRows.length === 0) {
-        // No questions, skip to done
+        // No passage or no questions for this passage — skip to done.
+        if (!data.passage || data.questions.length === 0) {
+          router.replace(buildDoneUrl());
+          return;
+        }
+
+        setPassage(data.passage);
+        setQuestions(data.questions);
+        setState("ready");
+      } catch (err) {
+        console.error("Error loading comprehension:", err);
         router.replace(buildDoneUrl());
-        return;
       }
-
-      setQuestions(questionRows);
-      setState("ready");
     }
 
     loadData();
-  }, [sessionId, token, router, supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, token, router]);
 
   const handleAnswerChange = (questionId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));

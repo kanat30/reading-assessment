@@ -72,6 +72,10 @@ interface ScoresJson {
   comprehension?: {
     score: number;
     total: number;
+    // Present and "grading" only in the brief window after a student submits,
+    // while the teacher-only AI grade runs in the background (see the
+    // comprehension route). Reports viewed later never see this.
+    status?: string;
   };
   summary: string;
   error_patterns?: EnhancedErrorPattern[];
@@ -731,7 +735,11 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             {hasComprehension && (
               <div className="text-center border-l border-mist">
                 <p className="text-3xl font-semibold text-ink">
-                  {comprehension.score}<span className="text-lg">/{comprehension.total}</span>
+                  {comprehension.status === "grading" ? (
+                    <span className="text-lg text-stone">Grading…</span>
+                  ) : (
+                    <>{comprehension.score}<span className="text-lg">/{comprehension.total}</span></>
+                  )}
                 </p>
                 <p className="text-xs text-stone uppercase tracking-wide mt-1">Comprehension</p>
               </div>
