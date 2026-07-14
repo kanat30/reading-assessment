@@ -58,6 +58,9 @@ interface SessionAssessment {
   id: string;
   class_label: string;
   school_id: string;
+  reading_level?: number | null;
+  assessment_period?: string | null;
+  passage_ids?: string[] | null;
   passages: AssessmentPassage;
 }
 
@@ -80,8 +83,70 @@ interface Session {
   teacher_review_status: ReviewStatus;
   has_note: boolean;
   passage_id?: string | null;
+  passage_index?: number | null;
   students: Student;
   assessments: SessionAssessment;
+}
+
+// A dashboard list entry is either a single session (single-passage assessment) or a
+// group of sessions belonging to one student's multi-passage (median-of-3) assessment.
+type DashboardRow =
+  | { kind: "single"; session: Session }
+  | {
+      kind: "group";
+      key: string;
+      sessions: Session[]; // ordered by passage_index
+      totalPassages: number;
+    };
+
+// Median WCPM across the passages a student actually read (Acadience median-of-3;
+// gracefully handles partial completion — 1 or 2 passages read).
+function medianWcpm(nums: number[]): number | null {
+  if (nums.length === 0) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[mid]
+    : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+// Group sessions into dashboard rows, preserving the incoming (scored_at desc) order:
+// a multi-passage assessment's sessions collapse into one group positioned at its most
+// recent read; everything else stays a standalone row.
+function buildDashboardRows(list: Session[]): DashboardRow[] {
+  const groups = new Map<string, Session[]>();
+  const order: string[] = [];
+  const isMulti = (s: Session) =>
+    Array.isArray(s.assessments.passage_ids) && s.assessments.passage_ids.length > 1;
+
+  for (const s of list) {
+    const key = isMulti(s) ? `g:${s.assessments.id}:${s.students.id}` : `s:${s.id}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      order.push(key);
+    }
+    groups.get(key)!.push(s);
+  }
+
+  return order.map((key) => {
+    const sessions = groups.get(key)!;
+    if (key.startsWith("s:")) return { kind: "single", session: sessions[0] };
+    const sorted = [...sessions].sort(
+      (a, b) => (a.passage_index ?? 0) - (b.passage_index ?? 0)
+    );
+    const totalPassages =
+      sorted[0].assessments.passage_ids?.length ?? sorted.length;
+    return { kind: "group", key, sessions: sorted, totalPassages };
+  });
+}
+
+// Aggregate review status for a group's header dot: surface the most actionable state.
+function aggregateReviewStatus(sessions: Session[]): ReviewStatus {
+  if (sessions.some((s) => s.teacher_review_status === "new")) return "new";
+  if (sessions.some((s) => s.teacher_review_status === "flagged")) return "flagged";
+  if (sessions.every((s) => s.teacher_review_status === "approved")) return "approved";
+  if (sessions.some((s) => s.teacher_review_status === "reviewed")) return "reviewed";
+  return "reviewed";
 }
 
 // Multi-passage library sessions store the actual passage read on the session
@@ -189,6 +254,7 @@ export function DashboardClient({
   const [sessions, setSessions] = useState(initialSessions);
   const [classLabels, setClassLabels] = useState(initialClassLabels);
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
+  const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
   const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
 
   // Assessment creation state
@@ -381,6 +447,16 @@ export function DashboardClient({
     }
   };
 
+  // Expand/collapse a multi-passage group. Collapsing also drops any open passage
+  // sub-report so a stale report doesn't linger when the group closes.
+  const toggleGroup = (key: string) => {
+    setExpandedGroupKey((prev) => {
+      const next = prev === key ? null : key;
+      if (next === null) setExpandedSessionId(null);
+      return next;
+    });
+  };
+
   // Update session status
   const updateSessionStatus = async (sessionId: string, status: ReviewStatus) => {
     try {
@@ -474,6 +550,7 @@ export function DashboardClient({
         if (showTips) setShowTips(false);
         else if (showClassDropdown) setShowClassDropdown(false);
         else if (expandedSessionId) setExpandedSessionId(null);
+        else if (expandedGroupKey) setExpandedGroupKey(null);
       }
     };
     const handleClickOutside = (e: MouseEvent) => {
@@ -491,7 +568,7 @@ export function DashboardClient({
       window.removeEventListener("keydown", handleEscape);
       window.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [expandedSessionId, showClassDropdown, showTips]);
+  }, [expandedSessionId, expandedGroupKey, showClassDropdown, showTips]);
 
   // Realtime subscription for new sessions
   // Falls back to polling if Realtime is unreliable in Vercel serverless
@@ -524,11 +601,15 @@ export function DashboardClient({
               duration_seconds,
               scores_json,
               passage_id,
+              passage_index,
               students(id, first_name, last_name),
               assessments!inner(
                 id,
                 class_label,
                 school_id,
+                reading_level,
+                assessment_period,
+                passage_ids,
                 passages(id, title, grade_band)
               )
             `)
@@ -567,11 +648,15 @@ export function DashboardClient({
               duration_seconds,
               scores_json,
               passage_id,
+              passage_index,
               students(id, first_name, last_name),
               assessments!inner(
                 id,
                 class_label,
                 school_id,
+                reading_level,
+                assessment_period,
+                passage_ids,
                 passages(id, title, grade_band)
               )
             `)
@@ -1000,6 +1085,334 @@ export function DashboardClient({
     setDeleteConfirmText("");
   };
 
+  // Collapse each student's multi-passage assessment into a single grouped row.
+  const groupedRows = buildDashboardRows(filteredSessions);
+
+  // Render one reading row. Reused for standalone (single-passage) rows and for the
+  // passage sub-rows inside an expanded multi-passage group — hence the opts.
+  const renderSessionRow = (
+    session: Session,
+    opts?: {
+      isSubRow?: boolean;
+      dimmed?: boolean;
+      primary?: React.ReactNode;
+      secondary?: React.ReactNode;
+    }
+  ) => {
+    const student = session.students;
+    const assessment = session.assessments;
+    const passage = assessment.passages;
+    const peaks = session.scores_json?.waveform_peaks;
+    const isExpanded = expandedSessionId === session.id;
+    const isProcessing = session.status === "processing";
+    const dimmed =
+      opts?.dimmed ?? (!!(expandedSessionId || expandedGroupKey) && !isExpanded);
+
+    return (
+      <motion.div
+        key={session.id}
+        layout
+        initial={{ opacity: 0, height: 0 }}
+        animate={{ opacity: dimmed ? 0.4 : 1, height: "auto" }}
+        exit={{ opacity: 0, height: 0 }}
+        transition={{ duration: 0.3, ease: "easeOut" }}
+      >
+        {/* Row */}
+        <div
+          onClick={() => {
+            if (isProcessing) return;
+            if (!opts?.isSubRow) setExpandedGroupKey(null);
+            handleRowClick(session.id);
+          }}
+          onMouseEnter={() => setHoveredRowId(session.id)}
+          onMouseLeave={() => setHoveredRowId(null)}
+          className={`px-4 py-2.5 rounded-lg transition-all duration-150 ${
+            isExpanded
+              ? "bg-mist/70 ring-1 ring-mist"
+              : hoveredRowId === session.id
+              ? "bg-mist/40 cursor-pointer"
+              : "hover:bg-mist/20 cursor-pointer"
+          } ${isProcessing ? "cursor-default opacity-70" : ""}`}
+        >
+          <div className="grid grid-cols-[auto_1fr_80px_auto] gap-4 items-center">
+            {/* Status dot */}
+            <div className="flex items-center justify-center w-4">
+              <StatusDot status={session.teacher_review_status} />
+            </div>
+
+            {/* Left: name/passage + meta + note icon */}
+            <div className="min-w-0 flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-medium text-ink truncate">
+                  {opts?.primary ?? `${student.first_name} ${student.last_name}`}
+                </p>
+                <p className="text-xs text-stone truncate">
+                  {opts?.secondary ??
+                    `${assessment.class_label} · ${passage.title}`}
+                </p>
+              </div>
+              {/* Note icon */}
+              {session.has_note && (
+                <span
+                  className="text-stone/60 flex-shrink-0"
+                  title="Has notes"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </span>
+              )}
+            </div>
+
+            {/* Middle: waveform */}
+            <div className="flex justify-center">
+              {isProcessing ? (
+                <div className="w-20 h-6 flex items-center justify-center">
+                  <div className="skeleton-shimmer w-16 h-5 rounded-sm" />
+                </div>
+              ) : (
+                <MiniWaveform
+                  peaks={peaks}
+                  isHovered={hoveredRowId === session.id}
+                />
+              )}
+            </div>
+
+            {/* Right: time + quick actions */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-stone whitespace-nowrap">
+                {isProcessing ? (
+                  <span className="text-xs">Scoring...</span>
+                ) : (
+                  formatContextualTime(session.scored_at || session.created_at)
+                )}
+              </span>
+              {/* Quick actions menu - visible on hover */}
+              {hoveredRowId === session.id && !isProcessing && (
+                <QuickActionsMenu
+                  sessionId={session.id}
+                  currentStatus={session.teacher_review_status}
+                  hasNote={session.has_note}
+                  onStatusChange={(status) => updateSessionStatus(session.id, status)}
+                  onAddNote={() => handleOpenNote(session)}
+                  onDelete={() => openDeleteConfirm(session, { stopPropagation: () => {} } as React.MouseEvent)}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Expanded panel */}
+        <AnimatePresence>
+          {isExpanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+              className="overflow-hidden"
+            >
+              {/* Sheet container - elevated card */}
+              <div className="mt-2 mb-6 bg-[#FDFCFA] border border-mist/60 rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.06)] overflow-hidden">
+                {/* Close button row */}
+                <div className="flex justify-end px-6 pt-4 pb-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedSessionId(null);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-stone hover:text-ink hover:bg-mist/60 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Close
+                  </button>
+                </div>
+
+                {/* Report content */}
+                <div className="px-8 pb-8">
+                  <SessionReport sessionId={session.id} />
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    );
+  };
+
+  // Render a multi-passage group: a collapsible header (median + progress) that opens
+  // to a median summary and one expandable sub-report per passage read.
+  const renderGroupRow = (
+    row: Extract<DashboardRow, { kind: "group" }>
+  ) => {
+    const { key, sessions, totalPassages } = row;
+    const student = sessions[0].students;
+    const assessment = sessions[0].assessments;
+    const isOpen = expandedGroupKey === key;
+    const dimmed = !!(expandedSessionId || expandedGroupKey) && !isOpen;
+    const readCount = sessions.length;
+    const anyProcessing = sessions.some((s) => s.status === "processing");
+    const wcpms = sessions
+      .map((s) => s.scores_json?.metrics?.wcpm)
+      .filter((n): n is number => typeof n === "number");
+    const median = medianWcpm(wcpms);
+    const readIndexes = new Set(sessions.map((s) => s.passage_index ?? 0));
+    const mostRecent = sessions.reduce((acc, s) => {
+      const t = s.scored_at || s.created_at;
+      return t > acc ? t : acc;
+    }, sessions[0].scored_at || sessions[0].created_at);
+
+    const meta = [
+      assessment.class_label,
+      assessment.reading_level ? `Level ${assessment.reading_level}` : null,
+      `${totalPassages} passages`,
+      median !== null
+        ? `median ${median} WCPM`
+        : anyProcessing
+        ? "scoring…"
+        : "not scored",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    return (
+      <motion.div
+        key={key}
+        layout
+        initial={{ opacity: 0, height: 0 }}
+        animate={{ opacity: dimmed ? 0.4 : 1, height: "auto" }}
+        exit={{ opacity: 0, height: 0 }}
+        transition={{ duration: 0.3, ease: "easeOut" }}
+      >
+        {/* Group header row */}
+        <div
+          onClick={() => toggleGroup(key)}
+          onMouseEnter={() => setHoveredRowId(key)}
+          onMouseLeave={() => setHoveredRowId(null)}
+          className={`px-4 py-2.5 rounded-lg transition-all duration-150 cursor-pointer ${
+            isOpen
+              ? "bg-mist/70 ring-1 ring-mist"
+              : hoveredRowId === key
+              ? "bg-mist/40"
+              : "hover:bg-mist/20"
+          }`}
+        >
+          <div className="grid grid-cols-[auto_1fr_80px_auto] gap-4 items-center">
+            {/* Aggregate status dot */}
+            <div className="flex items-center justify-center w-4">
+              <StatusDot status={aggregateReviewStatus(sessions)} />
+            </div>
+
+            {/* Name + group badge + meta */}
+            <div className="min-w-0 flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-medium text-ink truncate flex items-center gap-2">
+                  <span className="truncate">
+                    {student.first_name} {student.last_name}
+                  </span>
+                  <span className="flex-shrink-0 text-[10px] font-medium uppercase tracking-wide text-stone bg-mist/70 rounded-full px-2 py-0.5">
+                    {readCount} of {totalPassages}
+                  </span>
+                </p>
+                <p className="text-xs text-stone truncate">{meta}</p>
+              </div>
+            </div>
+
+            {/* Progress segments (one per passage; filled = read) */}
+            <div className="flex justify-center items-center gap-1">
+              {Array.from({ length: totalPassages }).map((_, i) => (
+                <span
+                  key={i}
+                  className={`h-1.5 w-4 rounded-full ${
+                    readIndexes.has(i) ? "bg-accent-blue" : "bg-mist"
+                  }`}
+                  title={readIndexes.has(i) ? "Read" : "Not read"}
+                />
+              ))}
+            </div>
+
+            {/* Time + expand chevron */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-stone whitespace-nowrap">
+                {anyProcessing ? (
+                  <span className="text-xs">Scoring...</span>
+                ) : (
+                  formatContextualTime(mostRecent)
+                )}
+              </span>
+              <svg
+                className={`w-4 h-4 text-stone transition-transform ${isOpen ? "rotate-180" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* Expanded group: median summary + per-passage sub-rows */}
+        <AnimatePresence>
+          {isOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+              className="overflow-hidden"
+            >
+              <div className="mt-2 mb-6 ml-3 border-l-2 border-mist/70 pl-3">
+                {/* Median summary strip */}
+                <div className="px-4 py-3 mb-1 rounded-lg bg-mist/30 flex items-baseline justify-between">
+                  <p className="text-sm text-ink">
+                    Median of{" "}
+                    {readCount === totalPassages
+                      ? totalPassages
+                      : `${readCount} of ${totalPassages}`}{" "}
+                    passages
+                  </p>
+                  <p className="text-sm">
+                    {median !== null ? (
+                      <>
+                        <span className="font-semibold text-ink">{median}</span>{" "}
+                        <span className="text-stone">WCPM</span>
+                      </>
+                    ) : (
+                      <span className="text-stone">Awaiting scores</span>
+                    )}
+                  </p>
+                </div>
+
+                {sessions.map((s, i) => {
+                  const w = s.scores_json?.metrics?.wcpm;
+                  const passageNum = (s.passage_index ?? i) + 1;
+                  const title =
+                    s.assessments.passages?.title ?? `Passage ${passageNum}`;
+                  const secondary = `Passage ${passageNum}${
+                    typeof w === "number"
+                      ? ` · ${w} WCPM`
+                      : s.status === "processing"
+                      ? " · scoring…"
+                      : ""
+                  }`;
+                  return renderSessionRow(s, {
+                    isSubRow: true,
+                    dimmed: !!expandedSessionId && expandedSessionId !== s.id,
+                    primary: title,
+                    secondary,
+                  });
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-paper">
       {/* Main content */}
@@ -1353,146 +1766,11 @@ export function DashboardClient({
                 {/* Sessions list */}
                 <div className="space-y-0">
               <AnimatePresence initial={false}>
-                {filteredSessions.map((session) => {
-                  const student = session.students;
-                  const assessment = session.assessments;
-                  const passage = assessment.passages;
-                  const peaks = session.scores_json?.waveform_peaks;
-                  const isExpanded = expandedSessionId === session.id;
-                  const isOtherExpanded = expandedSessionId && !isExpanded;
-                  const isProcessing = session.status === "processing";
-
-                  return (
-                    <motion.div
-                      key={session.id}
-                      layout
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{
-                        opacity: isOtherExpanded ? 0.4 : 1,
-                        height: "auto",
-                      }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.3, ease: "easeOut" }}
-                    >
-                      {/* Row */}
-                      <div
-                        onClick={() => !isProcessing && handleRowClick(session.id)}
-                        onMouseEnter={() => setHoveredRowId(session.id)}
-                        onMouseLeave={() => setHoveredRowId(null)}
-                        className={`px-4 py-2.5 rounded-lg transition-all duration-150 ${
-                          isExpanded
-                            ? "bg-mist/70 ring-1 ring-mist"
-                            : hoveredRowId === session.id
-                            ? "bg-mist/40 cursor-pointer"
-                            : "hover:bg-mist/20 cursor-pointer"
-                        } ${isProcessing ? "cursor-default opacity-70" : ""}`}
-                      >
-                        <div className="grid grid-cols-[auto_1fr_80px_auto] gap-4 items-center">
-                          {/* Status dot */}
-                          <div className="flex items-center justify-center w-4">
-                            <StatusDot status={session.teacher_review_status} />
-                          </div>
-
-                          {/* Left: name + meta + note icon */}
-                          <div className="min-w-0 flex items-center gap-2">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-base font-medium text-ink truncate">
-                                {student.first_name} {student.last_name}
-                              </p>
-                              <p className="text-xs text-stone truncate">
-                                {assessment.class_label} · {passage.title}
-                              </p>
-                            </div>
-                            {/* Note icon */}
-                            {session.has_note && (
-                              <span
-                                className="text-stone/60 flex-shrink-0"
-                                title="Has notes"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                </svg>
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Middle: waveform */}
-                          <div className="flex justify-center">
-                            {isProcessing ? (
-                              <div className="w-20 h-6 flex items-center justify-center">
-                                <div className="skeleton-shimmer w-16 h-5 rounded-sm" />
-                              </div>
-                            ) : (
-                              <MiniWaveform
-                                peaks={peaks}
-                                isHovered={hoveredRowId === session.id}
-                              />
-                            )}
-                          </div>
-
-                          {/* Right: time + quick actions */}
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-stone whitespace-nowrap">
-                              {isProcessing ? (
-                                <span className="text-xs">Scoring...</span>
-                              ) : (
-                                formatContextualTime(session.scored_at || session.created_at)
-                              )}
-                            </span>
-                            {/* Quick actions menu - visible on hover */}
-                            {hoveredRowId === session.id && !isProcessing && (
-                              <QuickActionsMenu
-                                sessionId={session.id}
-                                currentStatus={session.teacher_review_status}
-                                hasNote={session.has_note}
-                                onStatusChange={(status) => updateSessionStatus(session.id, status)}
-                                onAddNote={() => handleOpenNote(session)}
-                                onDelete={() => openDeleteConfirm(session, { stopPropagation: () => {} } as React.MouseEvent)}
-                              />
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Expanded panel */}
-                      <AnimatePresence>
-                        {isExpanded && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.3, ease: "easeOut" }}
-                            className="overflow-hidden"
-                          >
-                            {/* Sheet container - elevated card */}
-                            <div className="mt-2 mb-6 bg-[#FDFCFA] border border-mist/60 rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.06)] overflow-hidden">
-                              {/* Close button row */}
-                              <div className="flex justify-end px-6 pt-4 pb-2">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setExpandedSessionId(null);
-                                  }}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-stone hover:text-ink hover:bg-mist/60 transition-colors"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                  </svg>
-                                  Close
-                                </button>
-                              </div>
-
-                              {/* Report content */}
-                              <div className="px-8 pb-8">
-                                <SessionReport sessionId={session.id} />
-                              </div>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </motion.div>
-                  );
-                })}
+                {groupedRows.map((row) =>
+                  row.kind === "single"
+                    ? renderSessionRow(row.session)
+                    : renderGroupRow(row)
+                )}
               </AnimatePresence>
                 </div>
 

@@ -18,22 +18,19 @@ const COUNT_OPTIONS: {
   {
     count: 3,
     label: "3 Passages",
-    description: "Median-of-3 protocol for reliable benchmark scoring",
+    description: "Most reliable benchmark score",
     recommended: true,
   },
   {
     count: 1,
     label: "1 Passage",
-    description: "Quick check for progress monitoring",
+    description: "Quick progress check",
   },
 ];
 
 export function PassageCountSelector({ value, onChange }: PassageCountSelectorProps) {
   return (
     <div className="space-y-3">
-      <div className="text-sm text-neutral-500 mb-2">
-        Select how many passages students will read. The median-of-3 protocol provides the most reliable WCPM score.
-      </div>
       <div className="grid grid-cols-2 gap-3">
         {COUNT_OPTIONS.map((option) => {
           const isSelected = value === option.count;
@@ -45,7 +42,7 @@ export function PassageCountSelector({ value, onChange }: PassageCountSelectorPr
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               className={`
-                relative text-left p-4 rounded-lg border-2 transition-all
+                relative flex flex-col items-stretch justify-start text-left p-4 rounded-lg border-2 transition-all
                 ${isSelected
                   ? "border-[#171717] bg-[#171717]/10"
                   : "border-neutral-200 hover:border-neutral-300 bg-white"
@@ -53,7 +50,7 @@ export function PassageCountSelector({ value, onChange }: PassageCountSelectorPr
               `}
             >
               <div className="flex flex-col">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 pr-7">
                   <span className={`text-2xl font-bold ${isSelected ? "text-[#171717]" : "text-neutral-900"}`}>
                     {option.count}
                   </span>
@@ -91,8 +88,7 @@ export function PassageCountSelector({ value, onChange }: PassageCountSelectorPr
 
       {value === 3 && (
         <div className="p-3 bg-neutral-100 rounded-lg border border-neutral-200 text-sm text-neutral-700">
-          <strong>Median scoring:</strong> The middle WCPM of 3 passages is used for benchmarking.
-          This follows the Acadience/DIBELS protocol for more reliable fluency measurement.
+          The middle WCPM of the 3 readings is used, following the Acadience/DIBELS protocol.
         </div>
       )}
     </div>

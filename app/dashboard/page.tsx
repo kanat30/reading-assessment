@@ -46,11 +46,15 @@ export default async function DashboardPage() {
         scores_json,
         teacher_review_status,
         passage_id,
+        passage_index,
         students(id, first_name, last_name),
         assessments!inner(
           id,
           class_label,
           school_id,
+          reading_level,
+          assessment_period,
+          passage_ids,
           passages(id, title, grade_band)
         )
       `)
@@ -123,6 +127,9 @@ export default async function DashboardPage() {
       id: string;
       class_label: string;
       school_id: string;
+      reading_level: number | null;
+      assessment_period: string | null;
+      passage_ids: string[] | null;
       passages: { id: string; title: string; grade_band: string };
     };
     // Multi-passage library sessions store the actual passage on the session; the

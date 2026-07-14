@@ -74,9 +74,6 @@ export function PassageSelector({ level, maxSelections, selected, onChange }: Pa
                     {passage.title}
                   </h3>
                   <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mt-2">
-                    <span className="text-xs font-medium px-1.5 py-0.5 rounded whitespace-nowrap bg-neutral-100 text-neutral-600">
-                      Form {passage.form}
-                    </span>
                     <span className="text-sm text-neutral-500">
                       {passage.word_count} words · {passage.lexile}L · {passage.genre}
                     </span>
