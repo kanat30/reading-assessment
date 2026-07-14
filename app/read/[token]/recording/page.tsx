@@ -71,6 +71,10 @@ const STUDENT_NAME_KEY = "fs:student-name";
 const READ_TIME_LIMIT_SECONDS = 60;
 // Show a calm "almost done" cue only in the final stretch of the read.
 const ALMOST_DONE_SECONDS = 10;
+// In the very final seconds, fade in a large, ghosted countdown number over the
+// passage. Big enough to register in peripheral vision (so the student knows to
+// wrap up), faint enough to stay calm and read through — not a hard timer.
+const FINAL_COUNTDOWN_SECONDS = 5;
 
 function RecordingContent({ token }: { token: string }) {
   const router = useRouter();
@@ -705,6 +709,10 @@ function RecordingContent({ token }: { token: string }) {
   const timeLeftPercent = (secondsLeft / READ_TIME_LIMIT_SECONDS) * 100;
   const isAlmostDone =
     state === "recording" && secondsLeft <= ALMOST_DONE_SECONDS;
+  const showFinalCountdown =
+    state === "recording" &&
+    secondsLeft <= FINAL_COUNTDOWN_SECONDS &&
+    secondsLeft > 0;
 
   return (
     <div className="min-h-screen bg-paper flex flex-col">
@@ -736,6 +744,38 @@ function RecordingContent({ token }: { token: string }) {
                   <p className="text-paper/60 text-lg mt-2">Get ready to read...</p>
                 )}
               </motion.div>
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Final-seconds countdown — a large number centered just above the
+          time-remaining ribbon, in the lower-center where the eye naturally
+          drops to check the bar. It stays clear of the reading column above, so
+          it never sits on the words, but its size and central placement make it
+          easy to catch as the read closes. pointer-events-none so it can't
+          block a tap on the stop button. */}
+      <AnimatePresence>
+        {showFinalCountdown && (
+          <motion.div
+            key="final-countdown"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4 }}
+            className="fixed left-1/2 -translate-x-1/2 bottom-44 sm:bottom-48 z-40 pointer-events-none"
+          >
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={secondsLeft}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 0.55, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.35, ease: "easeOut" }}
+                className="block font-serif font-semibold text-stone leading-none select-none text-[7rem] sm:text-[9rem] tabular-nums"
+              >
+                {secondsLeft}
+              </motion.span>
             </AnimatePresence>
           </motion.div>
         )}
@@ -905,23 +945,9 @@ function RecordingContent({ token }: { token: string }) {
                     <motion.span
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="text-xs text-warning flex items-center gap-1.5"
+                      className="text-xs text-warning"
                     >
-                      {secondsLeft <= 5 ? (
-                        <>
-                          <motion.span
-                            key={secondsLeft}
-                            initial={{ scale: 1.3, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            className="font-mono font-medium"
-                          >
-                            {secondsLeft}
-                          </motion.span>
-                          <span>sec</span>
-                        </>
-                      ) : (
-                        "Wrapping up..."
-                      )}
+                      Wrapping up...
                     </motion.span>
                   )}
                 </div>
