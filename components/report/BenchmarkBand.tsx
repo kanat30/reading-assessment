@@ -7,11 +7,19 @@ interface BenchmarkBandProps {
   result: BenchmarkResult;
   showNorms?: boolean;
   compact?: boolean;
+  // Optional per-passage markers (median-of-3 group view). Each is placed on the scale
+  // at its WCPM with its label; the one matching the median is highlighted.
+  passageMarkers?: { label: string; wcpm: number }[];
 }
 
-export function BenchmarkBand({ result, showNorms = true, compact = false }: BenchmarkBandProps) {
+export function BenchmarkBand({ result, showNorms = true, compact = false, passageMarkers }: BenchmarkBandProps) {
   const colors = getBenchmarkColor(result.band);
   const { p25, p50 } = result.gradeNorms;
+  // For 3 reads the median equals one of the passage WCPMs, so its numbered marker
+  // doubles as the median highlight; only draw the standalone median pill when it does
+  // not coincide with a passage marker (e.g. a 2-passage average).
+  const medianOnAPassage =
+    !!passageMarkers && passageMarkers.some((m) => m.wcpm === result.wcpm);
 
   // Calculate position on the benchmark scale (0-100%)
   // Scale: 0 to p50 * 1.5 (showing some room above benchmark)
@@ -70,14 +78,43 @@ export function BenchmarkBand({ result, showNorms = true, compact = false }: Ben
           style={{ left: `${p50Position}%` }}
         />
 
-        {/* Current WCPM marker */}
-        <motion.div
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ delay: 0.2, type: "spring" }}
-          className={`absolute top-1 bottom-1 w-2 rounded-full ${colors.border} border-2 bg-paper shadow-sm`}
-          style={{ left: `calc(${wcpmPosition}% - 4px)` }}
-        />
+        {/* Per-passage numbered markers (group view) */}
+        {passageMarkers?.map((m, i) => {
+          const pos = Math.min(100, (m.wcpm / maxScale) * 100);
+          const isMedian = m.wcpm === result.wcpm;
+          return (
+            <div
+              key={i}
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-10"
+              style={{ left: `${pos}%` }}
+              title={`Passage ${m.label} · ${m.wcpm} WCPM${isMedian ? " (median)" : ""}`}
+            >
+              <div
+                className={`w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm ${
+                  isMedian
+                    ? "bg-accent-blue text-paper ring-2 ring-accent-blue/30"
+                    : "bg-paper text-ink border border-ink/40"
+                }`}
+              >
+                {m.label}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Median / current WCPM marker — vivid in group view, suppressed when it already
+            coincides with a numbered passage marker */}
+        {!medianOnAPassage && (
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ delay: 0.2, type: "spring" }}
+            className={`absolute top-1 bottom-1 w-2 rounded-full border-2 shadow-sm z-10 ${
+              passageMarkers ? "border-accent-blue bg-accent-blue" : `${colors.border} bg-paper`
+            }`}
+            style={{ left: `calc(${wcpmPosition}% - 4px)` }}
+          />
+        )}
       </div>
 
       {/* Labels */}

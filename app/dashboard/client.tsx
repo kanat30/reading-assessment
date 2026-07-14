@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { nanoid } from "nanoid";
 import { createClient } from "@/lib/supabase/browser";
 import { MiniWaveform } from "@/components/MiniWaveform";
+import { GroupMedianReport, GroupPassageStat } from "@/components/report/GroupMedianReport";
 import { ReportSkeleton } from "@/components/skeletons/ReportSkeleton";
 import { formatContextualTime } from "@/lib/format/time";
 import { QuickActionsMenu, StatusDot, ReviewStatus } from "@/components/QuickActionsMenu";
@@ -70,6 +71,8 @@ interface SessionScoresJson {
     wcpm: number;
     accuracy_percent: number;
   };
+  prosody?: { level?: number } | null;
+  comprehension?: { score?: number; total?: number; status?: string } | null;
   [key: string]: unknown;
 }
 
@@ -1258,6 +1261,14 @@ export function DashboardClient({
       .map((s) => s.scores_json?.metrics?.wcpm)
       .filter((n): n is number => typeof n === "number");
     const median = medianWcpm(wcpms);
+    const groupStats: GroupPassageStat[] = sessions.map((s) => ({
+      wcpm: s.scores_json?.metrics?.wcpm ?? null,
+      accuracy: s.scores_json?.metrics?.accuracy_percent ?? null,
+      prosodyLevel: s.scores_json?.prosody?.level ?? null,
+      comprehensionScore: s.scores_json?.comprehension?.score ?? null,
+      comprehensionTotal: s.scores_json?.comprehension?.total ?? null,
+      comprehensionPending: s.scores_json?.comprehension?.status === "grading",
+    }));
     const readIndexes = new Set(sessions.map((s) => s.passage_index ?? 0));
     const mostRecent = sessions.reduce((acc, s) => {
       const t = s.scored_at || s.created_at;
@@ -1365,26 +1376,13 @@ export function DashboardClient({
               className="overflow-hidden"
             >
               <div className="mt-2 mb-6 ml-3 border-l-2 border-mist/70 pl-3">
-                {/* Median summary strip */}
-                <div className="px-4 py-3 mb-1 rounded-lg bg-mist/30 flex items-baseline justify-between">
-                  <p className="text-sm text-ink">
-                    Median of{" "}
-                    {readCount === totalPassages
-                      ? totalPassages
-                      : `${readCount} of ${totalPassages}`}{" "}
-                    passages
-                  </p>
-                  <p className="text-sm">
-                    {median !== null ? (
-                      <>
-                        <span className="font-semibold text-ink">{median}</span>{" "}
-                        <span className="text-stone">WCPM</span>
-                      </>
-                    ) : (
-                      <span className="text-stone">Awaiting scores</span>
-                    )}
-                  </p>
-                </div>
+                {/* Overall median-of-3 report, derived from the passages read */}
+                <GroupMedianReport
+                  stats={groupStats}
+                  totalPassages={totalPassages}
+                  readingLevel={assessment.reading_level ?? null}
+                  period={assessment.assessment_period ?? null}
+                />
 
                 {sessions.map((s, i) => {
                   const w = s.scores_json?.metrics?.wcpm;
