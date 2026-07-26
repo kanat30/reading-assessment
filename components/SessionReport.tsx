@@ -19,7 +19,7 @@ import { SCORE_REVEAL } from "@/lib/animation/constants";
 import { ReadingLevel, AssessmentPeriod, getPassageById } from "@/lib/passages/library";
 import { calculateBenchmark, BenchmarkResult } from "@/lib/scoring/benchmark";
 import { parseStoredNorms, resolveNorms, describePassageVsGrade } from "@/lib/scoring/norms";
-import { deriveProsodyHeadline } from "@/lib/scoring/prosody";
+import { deriveProsodyHeadline } from "@/lib/scoring/prosody-dimensions";
 
 interface SessionReportProps {
   sessionId: string;

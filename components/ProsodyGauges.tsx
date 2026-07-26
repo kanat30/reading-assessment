@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ProsodyDimensions } from "@/lib/scoring/types";
-import { prosodyTotal } from "@/lib/scoring/prosody";
+import { prosodyTotal } from "@/lib/scoring/prosody-dimensions";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { SCORE_REVEAL } from "@/lib/animation/constants";
 

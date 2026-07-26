@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { EnhancedErrorPattern } from "@/lib/scoring/patterns";
 import { getLastReachedIndex } from "@/lib/scoring/metrics";
 import { ProsodyDimensions } from "@/lib/scoring/types";
-import { deriveProsodyHeadline, prosodyTotal } from "@/lib/scoring/prosody";
+import { deriveProsodyHeadline, prosodyTotal } from "@/lib/scoring/prosody-dimensions";
 import {
   parseStoredNorms,
   getBand,

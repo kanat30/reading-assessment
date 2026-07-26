@@ -35,7 +35,7 @@ import "./load-env"; // MUST be first: lib/scoring/ai.ts reads env at import tim
 import { createClient } from "@supabase/supabase-js";
 import { getPassageById } from "../lib/passages/library";
 import { resolveNorms, describeNormsBasis, getBand, getBandLabel } from "../lib/scoring/norms";
-import { computeProsodyDimensions } from "../lib/scoring/prosody";
+import { computeProsodyDimensions } from "../lib/scoring/prosody-dimensions";
 import { generateSummary } from "../lib/scoring/summary";
 import { SessionEvent, EnhancedErrorPattern } from "../lib/scoring/types";
 

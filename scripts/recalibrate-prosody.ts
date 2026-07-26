@@ -18,7 +18,7 @@
 import * as dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { getPassageById } from "../lib/passages/library";
-import { computeProsodyDimensions } from "../lib/scoring/prosody";
+import { computeProsodyDimensions } from "../lib/scoring/prosody-dimensions";
 import { SessionEvent } from "../lib/scoring/types";
 
 dotenv.config({ path: ".env.local" });

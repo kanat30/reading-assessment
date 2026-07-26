@@ -22,7 +22,7 @@ import {
   detectAssessmentPeriod,
   getAssessmentPeriodLabel,
 } from "@/lib/passages/library";
-import { deriveProsodyHeadline } from "@/lib/scoring/prosody";
+import { deriveProsodyHeadline } from "@/lib/scoring/prosody-dimensions";
 
 // Dynamic import for SessionReport with skeleton loading
 const SessionReport = dynamic(() => import("@/components/SessionReport").then(m => ({ default: m.SessionReport })), {
