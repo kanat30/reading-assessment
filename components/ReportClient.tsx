@@ -20,6 +20,10 @@ interface ReportClientProps {
   eventOverrides?: SessionEventOverride[];
   metrics: ScoringMetrics;
   durationSeconds: number;
+  /** False when the session has no stored audio (e.g. removed by retention); hides the dead player. */
+  hasAudio?: boolean;
+  /** Pre-computed peaks from scores_json so audio-less sessions still show the reading's shape. */
+  waveformPeaks?: number[];
   errorCounts: { errors: number; mispronunciations: number; selfCorrections: number };
   isVisible?: boolean;
   onProsodyDotClick?: (dimension: string, level: number) => void;
@@ -54,6 +58,8 @@ export function ReportClient({
   eventOverrides = [],
   metrics,
   durationSeconds,
+  hasAudio = true,
+  waveformPeaks,
   errorCounts,
   isVisible = true,
   onProsodyDotClick,
@@ -83,19 +89,36 @@ export function ReportClient({
 
   return (
     <div className="space-y-8 overflow-hidden">
-      {/* WaveSurfer waveform with error dots */}
+      {/* WaveSurfer waveform with error dots; static peaks when there is no audio */}
       <div>
         <h3 className="text-sm font-medium text-stone uppercase tracking-wide mb-4">
           Audio Playback
         </h3>
-        <ReportWaveform
-          audioUrl={`/api/audio/${sessionId}`}
-          events={events}
-          duration={durationSeconds}
-          seekRequest={seekRequest}
-          onTimeUpdate={handleTimeUpdate}
-          onSeek={handleWaveformSeek}
-        />
+        {hasAudio ? (
+          <ReportWaveform
+            audioUrl={`/api/audio/${sessionId}`}
+            events={events}
+            duration={durationSeconds}
+            seekRequest={seekRequest}
+            onTimeUpdate={handleTimeUpdate}
+            onSeek={handleWaveformSeek}
+          />
+        ) : (
+          <div>
+            <div className="h-[80px] flex items-center gap-[2px] overflow-hidden">
+              {(waveformPeaks ?? []).map((peak, i) => (
+                <div
+                  key={i}
+                  className="w-[2px] shrink-0 rounded-[1px] bg-stone/50"
+                  style={{ height: `${Math.max(3, peak * 76)}px` }}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-stone mt-2 italic">
+              Audio is not available for this reading.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Prosody gauges */}
@@ -115,7 +138,9 @@ export function ReportClient({
           Reading Transcript
         </h3>
         <p className="text-xs text-stone mb-3 italic">
-          Click any word to jump to that moment in the recording.
+          {hasAudio
+            ? "Click any word to jump to that moment in the recording."
+            : "Click any flagged word to review or override it."}
         </p>
 
         {/* Legend */}

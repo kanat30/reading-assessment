@@ -81,6 +81,7 @@ interface ScoresJson {
   error_patterns?: EnhancedErrorPattern[];
   avg_confidence: number;
   scoring_duration_seconds: number;
+  waveform_peaks?: number[];
 }
 
 interface SessionData {
@@ -88,6 +89,7 @@ interface SessionData {
   status: string;
   created_at: string;
   duration_seconds: number;
+  audio_url: string | null;
   scores_json: ScoresJson;
   teacher_review_status: string;
   students: StudentData;
@@ -204,6 +206,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             status,
             created_at,
             duration_seconds,
+            audio_url,
             scores_json,
             teacher_review_status,
             passage_id,
@@ -847,6 +850,8 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             events={events}
             eventOverrides={eventOverrides}
             metrics={metrics}
+            hasAudio={!!session.audio_url}
+            waveformPeaks={session.scores_json.waveform_peaks}
             durationSeconds={duration_seconds}
             errorCounts={{ errors: substitutions + omissions, mispronunciations, selfCorrections }}
             isVisible={isReportVisible}
