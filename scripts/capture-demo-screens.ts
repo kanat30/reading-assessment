@@ -45,17 +45,37 @@ async function main() {
     console.log("captured median-report.png");
   }
 
-  // 3. Open a per-passage report (expand a sub-row) and capture the full report
-  //    Navigate directly to a report page for a clean capture.
+  // 3. Capture the full report. Reports render inline on the dashboard (no
+  //    direct /report/ links in the collapsed list), but every expanded
+  //    session row carries a Print link (/report/<id>/print) — expand rows
+  //    until one appears, then strip "/print" for the standalone report page.
   await page.goto(`${BASE}/dashboard`);
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(1000);
 
-  const reportLink = await page.evaluate(() => {
-    // find any element that navigates to /report/<uuid>
-    const a = document.querySelector('a[href^="/report/"]');
-    return a?.getAttribute("href") ?? null;
-  });
+  let reportLink: string | null = null;
+  const findPrintLink = () =>
+    page.evaluate(() => {
+      const a = document.querySelector('a[href^="/report/"]');
+      return a?.getAttribute("href") ?? null;
+    });
+
+  reportLink = await findPrintLink();
+  if (!reportLink) {
+    // Expand a group, then its first per-passage sub-row, to mount the inline report.
+    const group = page.locator("text=/median/i").first();
+    if (await group.count()) {
+      await group.click();
+      await page.waitForTimeout(1000);
+      const subRow = page.locator("text=/Passage 1/i").first();
+      if (await subRow.count()) {
+        await subRow.click();
+        await page.waitForTimeout(2500);
+      }
+      reportLink = await findPrintLink();
+    }
+  }
+  if (reportLink) reportLink = reportLink.replace(/\/print$/, "");
   if (reportLink) {
     await page.goto(`${BASE}${reportLink}`);
     await page.waitForLoadState("networkidle");

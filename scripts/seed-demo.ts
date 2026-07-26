@@ -546,14 +546,31 @@ async function insertChunked(table: string, rows: Record<string, unknown>[], chu
   }
 }
 
-/** Monday of the current week at the given hour (local time). */
+/**
+ * A school-day timestamp inside the dashboard's CURRENT week window.
+ *
+ * The dashboard's "this week" filter starts on SUNDAY (see
+ * app/dashboard/client.tsx: startOfWeek = today - getDay()), so anchor to that
+ * same Sunday — anchoring to ISO Monday made every seeded session fall into
+ * the dashboard's *previous* week when run on a Sunday, leaving the default
+ * view empty. Offsets are school days from Monday; any slot that would land
+ * in the future is pulled back to earlier today (preserving order), so the
+ * window always shows the sessions no matter which day the seed runs.
+ */
 function weekday(dayOffsetFromMonday: number, hour: number, minute: number): Date {
   const now = new Date();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  monday.setHours(hour, minute, 0, 0);
-  monday.setDate(monday.getDate() + dayOffsetFromMonday);
-  return monday;
+  const sunday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  sunday.setDate(sunday.getDate() - sunday.getDay()); // dashboard week start
+  const d = new Date(sunday);
+  d.setDate(sunday.getDate() + 1 + dayOffsetFromMonday); // Monday + offset
+  d.setHours(hour, minute, 0, 0);
+  if (d > now) {
+    // Not reached yet this week — compress into earlier today, keeping the
+    // original day/hour ordering (offset 0 earliest).
+    const fallback = new Date(now.getTime() - (6 - dayOffsetFromMonday) * 60 * 60 * 1000 - (60 - minute) * 60 * 1000);
+    return fallback;
+  }
+  return d;
 }
 
 async function reset() {
