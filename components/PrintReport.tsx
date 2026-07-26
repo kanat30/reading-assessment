@@ -3,6 +3,16 @@
 import { useEffect } from "react";
 import { EnhancedErrorPattern } from "@/lib/scoring/patterns";
 import { getLastReachedIndex } from "@/lib/scoring/metrics";
+import { ProsodyDimensions } from "@/lib/scoring/types";
+import { deriveProsodyHeadline, prosodyTotal } from "@/lib/scoring/prosody";
+import {
+  parseStoredNorms,
+  getBand,
+  getBandLabel,
+  describePercentile,
+  describeNormsBasis,
+  describePassageVsGrade,
+} from "@/lib/scoring/norms";
 
 interface PrintReportProps {
   session: {
@@ -13,17 +23,17 @@ interface PrintReportProps {
       metrics: {
         wcpm: number;
         accuracy_percent: number;
-        percentile_estimate: number;
-        percentile_band: "above" | "approaching" | "below";
         correct_words: number;
         total_words_attempted: number;
       };
+      norms?: unknown;
       prosody?: {
         level: number;
         expression: string;
         phrasing: string;
         pace: string;
       };
+      prosody_dimensions?: Partial<ProsodyDimensions>;
       summary: string;
       error_patterns?: EnhancedErrorPattern[];
     };
@@ -43,12 +53,6 @@ interface PrintReportProps {
   }>;
 }
 
-function getOrdinalSuffix(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-}
-
 /**
  * Print-optimized report view.
  * Designed for letter-size paper (8.5" x 11") with 0.75" margins.
@@ -56,10 +60,21 @@ function getOrdinalSuffix(n: number): string {
  */
 export function PrintReport({ session, events }: PrintReportProps) {
   const { scores_json, students, assessments } = session;
-  const { metrics, prosody, summary, error_patterns } = scores_json;
+  const { metrics, summary, error_patterns } = scores_json;
   const passage = assessments.passages;
   const teacher = assessments.teachers;
   const school = assessments.schools;
+
+  // The session's stored norm set — resolved once at score time. Null for
+  // sessions scored before norm storage (run scripts/backfill-norms.ts).
+  const norms = parseStoredNorms(scores_json.norms);
+  const band = norms ? getBand(metrics.wcpm, norms.cuts) : null;
+  const normsCaption = norms ? describeNormsBasis(norms) : null;
+
+  // Deterministic prosody dimensions (Expression is teacher-rated).
+  const dimensions = scores_json.prosody_dimensions ?? null;
+  const prosodyHeadline = deriveProsodyHeadline(dimensions);
+  const prosodyTotals = prosodyTotal(dimensions);
 
   const studentName = `${students.first_name} ${students.last_name}`;
 
@@ -159,58 +174,100 @@ export function PrintReport({ session, events }: PrintReportProps) {
             </div>
             <div>
               <p className="text-4xl font-semibold text-black print:text-[36pt]">
-                {prosody?.level || "—"}/4
+                {prosodyHeadline != null ? `${prosodyHeadline}/4` : "—"}
               </p>
               <p className="text-xs uppercase tracking-wide text-gray-500 print:text-[9pt]">
-                Prosody (NAEP Scale)
+                Prosody (median of dimensions)
               </p>
             </div>
           </div>
 
-          {/* Percentile bar - static for print */}
-          <div className="mb-2">
-            <p className="text-xs text-gray-600 mb-1 print:text-[9pt]">
-              {getOrdinalSuffix(metrics.percentile_estimate)} percentile · Hasbrouck-Tindal Grade 6 Spring Norms
-            </p>
-            <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden print:bg-gray-300">
-              <div
-                className="h-full bg-black rounded-full"
-                style={{ width: `${metrics.percentile_estimate}%` }}
-              />
+          {/* Benchmark line — rendered from the session's stored norm set only */}
+          {norms && band && normsCaption ? (
+            <div className="mb-2">
+              <p className="text-sm text-black mb-0.5 print:text-[10pt]">
+                <span className="font-semibold">{getBandLabel(band)}</span>
+                {" · "}
+                {describePercentile(metrics.wcpm, norms.cuts)}
+              </p>
+              <p className="text-xs text-gray-600 print:text-[9pt]">
+                {normsCaption.caption} · 25th percentile: {norms.cuts.p25} WCPM · 50th: {norms.cuts.p50} WCPM
+              </p>
+              {describePassageVsGrade(norms) && (
+                <p className="text-xs text-gray-600 print:text-[9pt]">
+                  {describePassageVsGrade(norms)}
+                </p>
+              )}
+              {normsCaption.basisNote && (
+                <p className="text-xs text-gray-600 italic print:text-[9pt]">
+                  {normsCaption.basisNote}
+                </p>
+              )}
             </div>
-          </div>
+          ) : (
+            <p className="text-xs text-gray-600 italic mb-2 print:text-[9pt]">
+              Benchmark comparison unavailable — this session was scored before
+              norm-set recording. Re-run the scoring backfill to attach norms.
+            </p>
+          )}
         </div>
 
-        {/* Prosody Gauges - Print version with filled dots only */}
-        {prosody && (
-          <div className="mb-8 print-avoid-break">
-            <h2 className="text-xs uppercase tracking-wide text-gray-500 mb-3 print:text-[9pt]">
-              Fluency Dimensions <span className="normal-case italic">(AI-generated)</span>
-            </h2>
-            <div className="grid grid-cols-4 gap-4">
-              {[
-                { label: "Expression", value: 3 },
-                { label: "Phrasing", value: 3 },
-                { label: "Smoothness", value: 3 },
-                { label: "Pace", value: prosody.level },
-              ].map((dim) => (
-                <div key={dim.label} className="text-center">
-                  <p className="text-sm text-black font-medium print:text-[10pt]">{dim.label}</p>
-                  <div className="flex justify-center gap-1 mt-1">
-                    {[1, 2, 3, 4].map((level) => (
-                      <span
-                        key={level}
-                        className={`inline-block w-2 h-2 rounded-full ${
-                          level <= dim.value ? "bg-black" : "border border-gray-400"
-                        }`}
-                      />
-                    ))}
+        {/* Fluency dimensions — deterministic values computed from timing data;
+            Expression is teacher-rated. Never fabricated: sessions scored before
+            dimension computation show an honest absence instead of placeholders. */}
+        <div className="mb-8 print-avoid-break">
+          <h2 className="text-xs uppercase tracking-wide text-gray-500 mb-3 print:text-[9pt]">
+            Fluency Dimensions{" "}
+            <span className="normal-case italic">
+              (computed from timing data · Expression is teacher-rated)
+            </span>
+          </h2>
+          {dimensions ? (
+            <>
+              <div className="grid grid-cols-4 gap-4">
+                {(
+                  [
+                    { label: "Expression", value: dimensions.expression ?? null },
+                    { label: "Phrasing", value: dimensions.phrasing ?? null },
+                    { label: "Smoothness", value: dimensions.smoothness ?? null },
+                    { label: "Pace", value: dimensions.pace ?? null },
+                  ] as Array<{ label: string; value: number | null }>
+                ).map((dim) => (
+                  <div key={dim.label} className="text-center">
+                    <p className="text-sm text-black font-medium print:text-[10pt]">{dim.label}</p>
+                    {dim.value != null ? (
+                      <div className="flex justify-center gap-1 mt-1">
+                        {[1, 2, 3, 4].map((level) => (
+                          <span
+                            key={level}
+                            className={`inline-block w-2 h-2 rounded-full ${
+                              level <= dim.value! ? "bg-black" : "border border-gray-400"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-500 italic mt-1 print:text-[9pt]">
+                        Not yet rated
+                      </p>
+                    )}
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+                ))}
+              </div>
+              {prosodyTotals && (
+                <p className="text-xs text-gray-600 mt-2 print:text-[9pt]">
+                  Total: {prosodyTotals.total}/{prosodyTotals.max}
+                  {!prosodyTotals.expressionRated && " (Expression not yet rated)"}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-gray-500 italic print:text-[9pt]">
+              Dimension scores unavailable — this session was scored before
+              per-dimension prosody. Re-run the scoring backfill to compute them.
+            </p>
+          )}
+        </div>
 
         {/* AI Summary */}
         <div className="mb-8 print-avoid-break">

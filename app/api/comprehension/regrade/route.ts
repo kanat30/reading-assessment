@@ -158,6 +158,9 @@ export async function POST(request: NextRequest) {
       comprehension: {
         score: result.score,
         total: result.total,
+        // Propagate the honest grading state: a failed AI regrade stays
+        // "ungraded" (needs manual review), never a silent zero.
+        grading_status: result.grading_status,
       },
     };
 

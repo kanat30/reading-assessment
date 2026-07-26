@@ -131,10 +131,15 @@ export async function fetchOverrideAnalytics(
           schoolStats.get(schoolId)!.wcpm.push(newVal - original);
         }
       }
-    } else if (override.field_name.startsWith("prosody.")) {
-      const dimension = override.field_name.replace("prosody.", "");
+    } else if (
+      override.field_name.startsWith("prosody.") ||
+      override.field_name.startsWith("prosody_dimensions.")
+    ) {
+      const dimension = override.field_name.split(".")[1];
       const original = Number(override.original_value);
       const newVal = Number(override.new_value);
+      // Expression's initial teacher rating has original_value null — it is a
+      // rating, not a correction, so it doesn't feed the bias stats (NaN skip).
       if (!isNaN(original) && !isNaN(newVal)) {
         prosodyOverrides.push({ dimension, original, new: newVal });
 

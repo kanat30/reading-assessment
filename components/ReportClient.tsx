@@ -4,8 +4,7 @@ import { useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { SyncedTranscript } from "./SyncedTranscript";
 import { ProsodyGauges } from "./ProsodyGauges";
-import { AIBadge } from "./AIBadge";
-import { SessionEvent, SessionEventOverride, ScoringMetrics, EventType, EventOverrideAction } from "@/lib/scoring/types";
+import { SessionEvent, SessionEventOverride, EventType, EventOverrideAction, ProsodyDimensions } from "@/lib/scoring/types";
 
 // Dynamic import for ReportWaveform (heavy WaveSurfer dependency)
 const ReportWaveform = dynamic(() => import("./ReportWaveform").then(m => ({ default: m.ReportWaveform })), {
@@ -18,7 +17,9 @@ interface ReportClientProps {
   passageText: string;
   events: SessionEvent[];
   eventOverrides?: SessionEventOverride[];
-  metrics: ScoringMetrics;
+  /** Stored prosody dimensions from scores_json (incl. teacher overrides). */
+  prosodyDimensions?: Partial<ProsodyDimensions> | null;
+  overriddenProsodyDimensions?: string[];
   durationSeconds: number;
   /** False when the session has no stored audio (e.g. removed by retention); hides the dead player. */
   hasAudio?: boolean;
@@ -56,7 +57,8 @@ export function ReportClient({
   passageText,
   events,
   eventOverrides = [],
-  metrics,
+  prosodyDimensions = null,
+  overriddenProsodyDimensions = [],
   durationSeconds,
   hasAudio = true,
   waveformPeaks,
@@ -121,15 +123,23 @@ export function ReportClient({
         )}
       </div>
 
-      {/* Prosody gauges */}
+      {/* Prosody gauges — stored deterministic dimensions (Expression is
+          teacher-rated), not an AI output, so no AI badge here. */}
       <div>
         <div className="flex items-center gap-2 mb-4">
           <h3 className="text-sm font-medium text-stone uppercase tracking-wide">
             Fluency Dimensions
           </h3>
-          <AIBadge />
+          <span className="text-[10px] text-stone uppercase tracking-wider">
+            computed from timing data · click a dot to adjust
+          </span>
         </div>
-        <ProsodyGauges events={events} metrics={metrics} isVisible={isVisible} onDotClick={onProsodyDotClick} />
+        <ProsodyGauges
+          dimensions={prosodyDimensions}
+          overriddenDimensions={overriddenProsodyDimensions}
+          isVisible={isVisible}
+          onDotClick={onProsodyDotClick}
+        />
       </div>
 
       {/* Synced transcript */}

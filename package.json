@@ -7,9 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "npm run test:scoring && npm run test:recompute",
+    "test": "npm run test:scoring && npm run test:recompute && npm run test:migrations",
     "test:scoring": "node --import tsx --test lib/scoring/*.test.ts",
-    "test:recompute": "bash scripts/test-recompute.sh"
+    "test:recompute": "bash scripts/test-recompute.sh",
+    "test:migrations": "bash scripts/test-migrations.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

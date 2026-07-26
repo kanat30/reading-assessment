@@ -22,6 +22,7 @@ import {
   detectAssessmentPeriod,
   getAssessmentPeriodLabel,
 } from "@/lib/passages/library";
+import { deriveProsodyHeadline } from "@/lib/scoring/prosody";
 
 // Dynamic import for SessionReport with skeleton loading
 const SessionReport = dynamic(() => import("@/components/SessionReport").then(m => ({ default: m.SessionReport })), {
@@ -61,6 +62,7 @@ interface SessionAssessment {
   school_id: string;
   reading_level?: number | null;
   assessment_period?: string | null;
+  student_grade?: number | null;
   passage_ids?: string[] | null;
   passages: AssessmentPassage;
 }
@@ -71,8 +73,15 @@ interface SessionScoresJson {
     wcpm: number;
     accuracy_percent: number;
   };
+  norms?: unknown;
   prosody?: { level?: number } | null;
-  comprehension?: { score?: number; total?: number; status?: string } | null;
+  prosody_dimensions?: {
+    pace?: number | null;
+    smoothness?: number | null;
+    phrasing?: number | null;
+    expression?: number | null;
+  } | null;
+  comprehension?: { score?: number | null; total?: number; status?: string; grading_status?: string } | null;
   [key: string]: unknown;
 }
 
@@ -273,6 +282,10 @@ export function DashboardClient({
   const [passageCount, setPassageCount] = useState<PassageCount>(3);
   const [selectedPassageIds, setSelectedPassageIds] = useState<string[]>([]);
   const assessmentPeriod = detectAssessmentPeriod();
+  // Student grade drives Hasbrouck-Tindal norm selection (banding is by the
+  // STUDENT'S grade; passage level only routes difficulty). Left unset, the
+  // norms fall back to a passage-level estimate, labeled as such on reports.
+  const [studentGrade, setStudentGrade] = useState<number | null>(null);
 
   // Question management state
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -612,6 +625,7 @@ export function DashboardClient({
                 school_id,
                 reading_level,
                 assessment_period,
+                student_grade,
                 passage_ids,
                 passages(id, title, grade_band)
               )
@@ -659,6 +673,7 @@ export function DashboardClient({
                 school_id,
                 reading_level,
                 assessment_period,
+                student_grade,
                 passage_ids,
                 passages(id, title, grade_band)
               )
@@ -825,6 +840,9 @@ export function DashboardClient({
         ...(expiresAt && { expires_at: expiresAt }),
         use_numbered_students: useNumberedStudents,
         ...(useNumberedStudents && { expected_student_count: expectedStudentCount }),
+        // Norm basis: banding uses the student's grade (D1); null falls back
+        // to passage-level estimation, labeled on every report surface.
+        student_grade: studentGrade,
         // New passage library fields
         ...(usingLibrary && {
           reading_level: selectedReadingLevel,
@@ -1264,10 +1282,14 @@ export function DashboardClient({
     const groupStats: GroupPassageStat[] = sessions.map((s) => ({
       wcpm: s.scores_json?.metrics?.wcpm ?? null,
       accuracy: s.scores_json?.metrics?.accuracy_percent ?? null,
-      prosodyLevel: s.scores_json?.prosody?.level ?? null,
+      // Median of the stored deterministic dimensions (D2). Sessions scored
+      // before dimensions existed contribute nothing rather than a stale level.
+      prosodyLevel: deriveProsodyHeadline(s.scores_json?.prosody_dimensions),
       comprehensionScore: s.scores_json?.comprehension?.score ?? null,
       comprehensionTotal: s.scores_json?.comprehension?.total ?? null,
       comprehensionPending: s.scores_json?.comprehension?.status === "grading",
+      comprehensionUngraded: s.scores_json?.comprehension?.grading_status === "ungraded",
+      norms: s.scores_json?.norms,
     }));
     const readIndexes = new Set(sessions.map((s) => s.passage_index ?? 0));
     const mostRecent = sessions.reduce((acc, s) => {
@@ -1382,6 +1404,7 @@ export function DashboardClient({
                   totalPassages={totalPassages}
                   readingLevel={assessment.reading_level ?? null}
                   period={assessment.assessment_period ?? null}
+                  studentGrade={assessment.student_grade ?? null}
                 />
 
                 {sessions.map((s, i) => {
@@ -1979,6 +2002,34 @@ export function DashboardClient({
                     <p className="text-sm text-stone mb-2">
                       Assessment period: <span className="font-medium text-ink">{getAssessmentPeriodLabel(assessmentPeriod)}</span>
                     </p>
+
+                    {/* Student grade — sets the Hasbrouck-Tindal norm table for
+                        banding (passage level only routes difficulty) */}
+                    <div className="mt-4">
+                      <p className="text-sm text-stone mb-2">
+                        Student grade <span className="text-stone/60">(sets benchmark norms)</span>
+                      </p>
+                      <div className="flex gap-2">
+                        {[4, 5, 6, 7, 8].map((grade) => (
+                          <button
+                            key={grade}
+                            onClick={() => setStudentGrade(studentGrade === grade ? null : grade)}
+                            className={`w-10 h-10 rounded-lg border text-sm font-medium transition-colors ${
+                              studentGrade === grade
+                                ? "bg-ink text-paper border-ink"
+                                : "bg-paper text-ink border-mist hover:border-stone"
+                            }`}
+                          >
+                            {grade}
+                          </button>
+                        ))}
+                      </div>
+                      {studentGrade === null && (
+                        <p className="text-xs text-stone mt-2 italic">
+                          Without a grade, reports estimate norms from the passage level and say so.
+                        </p>
+                      )}
+                    </div>
 
                     <div className="mt-6">
                       <PassageCountSelector

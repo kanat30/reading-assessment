@@ -1,16 +1,5 @@
 import { SessionEvent, ScoringMetrics, ErrorPattern } from "./types";
 
-// Hasbrouck-Tindal Grade 6 Spring Norms (2017 compiled norms, Technical Report
-// #1702; eric.ed.gov/?id=ED594994). Legacy percentile path only — sessions with a
-// reading level use HASBROUCK_TINDAL_NORMS in lib/passages/library.ts instead.
-const NORMS = {
-  percentile_90: 204,
-  percentile_75: 173,
-  percentile_50: 146,
-  percentile_25: 122,
-  percentile_10: 91,
-};
-
 // A student reads one contiguous chunk of the passage and then goes silent, so
 // once they truly stop there should be no more voiced words. But the aligner can
 // still attach a stray match past the stop point — most often when the word the
@@ -96,8 +85,6 @@ export function calculateMetrics(
       accuracy_percent: 0,
       correct_words: 0,
       total_words_attempted: 0,
-      percentile_estimate: 1,
-      percentile_band: "below",
     };
   }
 
@@ -107,62 +94,12 @@ export function calculateMetrics(
   // Calculate accuracy
   const accuracy_percent = Math.round((correctWords / totalWordsAttempted) * 100);
 
-  // Calculate percentile estimate using linear interpolation
-  const percentile_estimate = estimatePercentile(wcpm);
-
-  // Determine percentile band
-  let percentile_band: "above" | "approaching" | "below";
-  if (wcpm >= NORMS.percentile_50) {
-    percentile_band = "above";
-  } else if (wcpm >= NORMS.percentile_25) {
-    percentile_band = "approaching";
-  } else {
-    percentile_band = "below";
-  }
-
   return {
     wcpm,
     accuracy_percent,
     correct_words: correctWords,
     total_words_attempted: totalWordsAttempted,
-    percentile_estimate,
-    percentile_band,
   };
-}
-
-function estimatePercentile(wcpm: number): number {
-  // Linear interpolation between norm points
-  const points = [
-    { percentile: 10, wcpm: NORMS.percentile_10 },
-    { percentile: 25, wcpm: NORMS.percentile_25 },
-    { percentile: 50, wcpm: NORMS.percentile_50 },
-    { percentile: 75, wcpm: NORMS.percentile_75 },
-    { percentile: 90, wcpm: NORMS.percentile_90 },
-  ];
-
-  // Below minimum
-  if (wcpm <= points[0].wcpm) {
-    return Math.max(1, Math.round((wcpm / points[0].wcpm) * points[0].percentile));
-  }
-
-  // Above maximum
-  if (wcpm >= points[points.length - 1].wcpm) {
-    const excess = wcpm - points[points.length - 1].wcpm;
-    return Math.min(99, points[points.length - 1].percentile + Math.round(excess / 5));
-  }
-
-  // Find the two points to interpolate between
-  for (let i = 0; i < points.length - 1; i++) {
-    if (wcpm >= points[i].wcpm && wcpm < points[i + 1].wcpm) {
-      const ratio =
-        (wcpm - points[i].wcpm) / (points[i + 1].wcpm - points[i].wcpm);
-      return Math.round(
-        points[i].percentile + ratio * (points[i + 1].percentile - points[i].percentile)
-      );
-    }
-  }
-
-  return 50; // Fallback
 }
 
 export function analyzeErrorPatterns(events: SessionEvent[]): ErrorPattern[] {

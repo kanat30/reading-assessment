@@ -57,6 +57,9 @@ async function gradeAndPersist(
     const comprehensionData: Record<string, unknown> = {
       score: result.score,
       total: result.total,
+      // "ungraded" = the AI call failed: score is null, the report shows a
+      // needs-manual-review state, aggregates exclude this passage.
+      grading_status: result.grading_status,
     };
     if (isLibraryPassage) comprehensionData.answers = result.answers;
 

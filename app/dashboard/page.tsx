@@ -54,6 +54,7 @@ export default async function DashboardPage() {
           school_id,
           reading_level,
           assessment_period,
+          student_grade,
           passage_ids,
           passages(id, title, grade_band)
         )
@@ -129,6 +130,7 @@ export default async function DashboardPage() {
       school_id: string;
       reading_level: number | null;
       assessment_period: string | null;
+      student_grade: number | null;
       passage_ids: string[] | null;
       passages: { id: string; title: string; grade_band: string };
     };

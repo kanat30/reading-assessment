@@ -95,20 +95,23 @@ JSON array only, no other text.`,
       return sum;
     }, 0);
 
-    return { questions, answers, score, total: questions.length };
+    return { questions, answers, score, total: questions.length, grading_status: "graded" };
   } catch (error) {
-    // Fallback: mark all as needing review (don't fail the submission)
+    // Fallback: an explicit UNGRADED state — never silent zeros. Marking
+    // answers "incorrect" here would make an AI outage read as a student who
+    // failed comprehension (and drag group aggregates). The report shows a
+    // needs-manual-review state instead and aggregates skip this passage.
     logAiFallback("comprehension-grading", error);
 
     const answers: ComprehensionAnswer[] = questions.map((question) => ({
       question_id: question.id,
       student_answer: studentAnswers[question.id] || "",
       is_correct: false,
-      status: "incorrect" as ComprehensionStatus,
-      feedback: "Grading unavailable - please review manually.",
+      status: "ungraded" as ComprehensionStatus,
+      feedback: "AI grading was unavailable — review this answer manually or re-grade from the report.",
       expected_answer: undefined,
     }));
 
-    return { questions, answers, score: 0, total: questions.length };
+    return { questions, answers, score: null, total: questions.length, grading_status: "ungraded" };
   }
 }

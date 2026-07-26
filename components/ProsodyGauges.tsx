@@ -2,16 +2,19 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { SessionEvent, ScoringMetrics } from "@/lib/scoring/types";
+import { ProsodyDimensions } from "@/lib/scoring/types";
+import { prosodyTotal } from "@/lib/scoring/prosody";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { SCORE_REVEAL } from "@/lib/animation/constants";
 
-// Tooltips clarifying these are AI estimates
+// Honest labels: three dimensions are deterministic rules over timing/event
+// data (documented in lib/scoring/prosody.ts); Expression cannot be derived
+// from ASR timestamps and is teacher-rated.
 const DIMENSION_INFO: Record<string, string> = {
-  expression: "AI estimate based on timing variation",
-  phrasing: "AI estimate based on pause patterns",
-  smoothness: "AI estimate based on self-corrections",
-  pace: "AI estimate based on reading speed",
+  expression: "Teacher-rated — timing data cannot measure expression",
+  phrasing: "Computed from pause placement (mid-sentence vs. at punctuation)",
+  smoothness: "Computed from the self-correction/mispronunciation rate",
+  pace: "Computed from words correct per minute",
 };
 
 function InfoTooltip({ text, align = "left" }: { text: string; align?: "left" | "right" }) {
@@ -73,27 +76,34 @@ function InfoTooltip({ text, align = "left" }: { text: string; align?: "left" | 
 }
 
 interface ProsodyGaugesProps {
-  events: SessionEvent[];
-  metrics: ScoringMetrics;
+  /**
+   * The stored dimension values from scores_json.prosody_dimensions — the ONE
+   * prosody source (computed at score time, mutated only by teacher
+   * overrides). This component renders them; it never computes its own.
+   */
+  dimensions: Partial<ProsodyDimensions> | null;
+  /** Dimension names the teacher has overridden (shown as edited). */
+  overriddenDimensions?: string[];
   isVisible?: boolean;
   onDotClick?: (dimension: string, level: number) => void;
 }
 
-interface DimensionScore {
-  id: string;
-  label: string;
-  value: 1 | 2 | 3 | 4;
-  description: string;
-}
+const DIMENSION_ORDER: Array<{ id: keyof ProsodyDimensions; label: string }> = [
+  { id: "expression", label: "Expression" },
+  { id: "phrasing", label: "Phrasing" },
+  { id: "smoothness", label: "Smoothness" },
+  { id: "pace", label: "Pace" },
+];
 
 /**
- * Four MDFS (Multi-Dimensional Fluency Scale) prosody gauges.
- * Refined for Week 5 with staggered entrance animation and click-to-override.
- * Week 6: Added reduced motion support.
+ * Four MDFS (Multi-Dimensional Fluency Scale) prosody gauges rendering the
+ * stored per-dimension values. Expression shows "Not yet rated" until a
+ * teacher sets it (dot click opens the override panel — that IS the rating
+ * mechanism). Total renders /16 only once all four dimensions have values.
  */
 export function ProsodyGauges({
-  events,
-  metrics,
+  dimensions,
+  overriddenDimensions = [],
   isVisible = true,
   onDotClick,
 }: ProsodyGaugesProps) {
@@ -111,213 +121,91 @@ export function ProsodyGauges({
     }
   }, [isVisible, animationStarted, reducedMotion]);
 
-  // Calculate prosody dimensions
-  const dimensions = calculateProsodyDimensions(events, metrics);
+  if (!dimensions) {
+    return (
+      <p className="text-sm text-stone italic">
+        Dimension scores are not available for this session (scored before
+        per-dimension prosody). Re-run the scoring backfill to compute them.
+      </p>
+    );
+  }
+
+  const totals = prosodyTotal(dimensions);
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-      {dimensions.map((dim, rowIndex) => (
-        <div key={dim.id} className="flex flex-col gap-1.5">
-          {/* Label with info tooltip */}
-          <div className="flex items-center gap-1">
-            <p className="text-sm text-stone lowercase">
-              {dim.label}
-            </p>
-            <InfoTooltip
-              text={DIMENSION_INFO[dim.id]}
-              align={rowIndex >= 2 ? "right" : "left"}
-            />
-          </div>
+    <div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {DIMENSION_ORDER.map((dim, rowIndex) => {
+          const value = dimensions[dim.id] ?? null;
+          const isEdited = overriddenDimensions.includes(dim.id);
 
-          {/* Dots */}
-          <div className="flex items-center gap-1.5">
-            {[1, 2, 3, 4].map((level) => {
-              const dotIndex = rowIndex * 4 + (level - 1);
-              const isFilled = level <= dim.value;
-
-              return (
-                <motion.button
-                  key={level}
-                  initial={{ opacity: reducedMotion ? 1 : 0 }}
-                  animate={animationStarted ? { opacity: 1 } : { opacity: 0 }}
-                  transition={
-                    reducedMotion
-                      ? { duration: 0 }
-                      : {
-                          duration: 0.15,
-                          delay: dotIndex * SCORE_REVEAL.dotStagger,
-                          ease: "easeOut",
-                        }
-                  }
-                  onClick={() => onDotClick?.(dim.id, level)}
-                  className={`w-2 h-2 rounded-full transition-all duration-[120ms] cursor-pointer hover:scale-125 ${
-                    isFilled ? "bg-ink" : "bg-mist"
-                  }`}
-                  title={`Set ${dim.label.toLowerCase()} to ${level}`}
-                  aria-label={`Set ${dim.label.toLowerCase()} to ${level}`}
+          return (
+            <div key={dim.id} className="flex flex-col gap-1.5">
+              {/* Label with info tooltip */}
+              <div className="flex items-center gap-1">
+                <p className="text-sm text-stone lowercase">{dim.label}</p>
+                <InfoTooltip
+                  text={DIMENSION_INFO[dim.id]}
+                  align={rowIndex >= 2 ? "right" : "left"}
                 />
-              );
-            })}
-          </div>
-        </div>
-      ))}
+                {isEdited && (
+                  <span className="text-[9px] text-stone uppercase tracking-wider border-b border-accent-blue">
+                    edited
+                  </span>
+                )}
+              </div>
+
+              {/* Dots */}
+              <div className="flex items-center gap-1.5">
+                {[1, 2, 3, 4].map((level) => {
+                  const dotIndex = rowIndex * 4 + (level - 1);
+                  const isFilled = value != null && level <= value;
+
+                  return (
+                    <motion.button
+                      key={level}
+                      initial={{ opacity: reducedMotion ? 1 : 0 }}
+                      animate={animationStarted ? { opacity: 1 } : { opacity: 0 }}
+                      transition={
+                        reducedMotion
+                          ? { duration: 0 }
+                          : {
+                              duration: 0.15,
+                              delay: dotIndex * SCORE_REVEAL.dotStagger,
+                              ease: "easeOut",
+                            }
+                      }
+                      onClick={() => onDotClick?.(dim.id, level)}
+                      className={`w-2 h-2 rounded-full transition-all duration-[120ms] cursor-pointer hover:scale-125 ${
+                        isFilled
+                          ? "bg-ink"
+                          : value == null
+                          ? "border border-stone/40 bg-transparent"
+                          : "bg-mist"
+                      }`}
+                      title={`Set ${dim.label.toLowerCase()} to ${level}`}
+                      aria-label={`Set ${dim.label.toLowerCase()} to ${level}`}
+                    />
+                  );
+                })}
+                {value == null && (
+                  <span className="text-[10px] text-stone italic ml-1">
+                    Not yet rated
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Total across dimensions — /16 only once Expression is rated */}
+      {totals && (
+        <p className="text-xs text-stone mt-4">
+          Total: <span className="font-medium text-ink">{totals.total}/{totals.max}</span>
+          {!totals.expressionRated && " (Expression not yet rated)"}
+        </p>
+      )}
     </div>
   );
-}
-
-/**
- * Calculate prosody dimensions using rule-based heuristics.
- */
-function calculateProsodyDimensions(
-  events: SessionEvent[],
-  metrics: ScoringMetrics
-): DimensionScore[] {
-  // Expression: Based on word duration variance
-  const expression = calculateExpression(events);
-
-  // Phrasing: 4 minus count of pauses > 1.5s
-  const phrasing = calculatePhrasing(events);
-
-  // Smoothness: 4 minus self-corrections count, clamped
-  const smoothness = calculateSmoothness(events);
-
-  // Pace: From WCPM
-  const pace = calculatePace(metrics.wcpm);
-
-  return [
-    {
-      id: "expression",
-      label: "Expression",
-      value: expression.value,
-      description: expression.description,
-    },
-    {
-      id: "phrasing",
-      label: "Phrasing",
-      value: phrasing.value,
-      description: phrasing.description,
-    },
-    {
-      id: "smoothness",
-      label: "Smoothness",
-      value: smoothness.value,
-      description: smoothness.description,
-    },
-    {
-      id: "pace",
-      label: "Pace",
-      value: pace.value,
-      description: pace.description,
-    },
-  ];
-}
-
-function calculateExpression(events: SessionEvent[]): {
-  value: 1 | 2 | 3 | 4;
-  description: string;
-} {
-  const durations: number[] = [];
-
-  for (const e of events) {
-    if (e.start_timestamp_ms !== null && e.end_timestamp_ms !== null) {
-      const duration = e.end_timestamp_ms - e.start_timestamp_ms;
-      if (duration > 0 && duration < 2000) {
-        durations.push(duration);
-      }
-    }
-  }
-
-  if (durations.length < 5) {
-    return { value: 2, description: "Limited data for expression analysis" };
-  }
-
-  const mean = durations.reduce((a, b) => a + b, 0) / durations.length;
-  const variance =
-    durations.reduce((sum, d) => sum + Math.pow(d - mean, 2), 0) /
-    durations.length;
-  const coeffOfVariation = Math.sqrt(variance) / mean;
-
-  if (coeffOfVariation >= 0.3 && coeffOfVariation <= 0.6) {
-    return { value: 4, description: "Natural variation in word emphasis" };
-  } else if (coeffOfVariation >= 0.2 && coeffOfVariation < 0.7) {
-    return { value: 3, description: "Some variation in expression" };
-  } else if (coeffOfVariation < 0.2) {
-    return { value: 2, description: "Mostly monotone delivery" };
-  } else {
-    return { value: 2, description: "Inconsistent word timing" };
-  }
-}
-
-function calculatePhrasing(events: SessionEvent[]): {
-  value: 1 | 2 | 3 | 4;
-  description: string;
-} {
-  let longPauses = 0;
-
-  for (let i = 1; i < events.length; i++) {
-    const prev = events[i - 1];
-    const curr = events[i];
-
-    if (prev.end_timestamp_ms !== null && curr.start_timestamp_ms !== null) {
-      const gap = curr.start_timestamp_ms - prev.end_timestamp_ms;
-      if (gap > 1500) {
-        longPauses++;
-      }
-    }
-  }
-
-  const value = Math.max(1, Math.min(4, 4 - longPauses)) as 1 | 2 | 3 | 4;
-
-  const descriptions: Record<number, string> = {
-    4: "Natural phrase boundaries",
-    3: "Occasional hesitations",
-    2: "Some long pauses",
-    1: "Frequent interruptions",
-  };
-
-  return { value, description: descriptions[value] };
-}
-
-function calculateSmoothness(events: SessionEvent[]): {
-  value: 1 | 2 | 3 | 4;
-  description: string;
-} {
-  const selfCorrections = events.filter(
-    (e) => e.event_type === "self_correction"
-  ).length;
-
-  const value = Math.max(1, Math.min(4, 4 - selfCorrections)) as 1 | 2 | 3 | 4;
-
-  const descriptions: Record<number, string> = {
-    4: "Smooth, uninterrupted reading",
-    3: "Minor corrections made",
-    2: "Several self-corrections",
-    1: "Frequent self-corrections",
-  };
-
-  return { value, description: descriptions[value] };
-}
-
-function calculatePace(wcpm: number): {
-  value: 1 | 2 | 3 | 4;
-  description: string;
-} {
-  let value: 1 | 2 | 3 | 4;
-  let description: string;
-
-  if (wcpm >= 90) {
-    value = 4;
-    description = "Appropriate, consistent pace";
-  } else if (wcpm >= 70) {
-    value = 3;
-    description = "Generally steady pace";
-  } else if (wcpm >= 50) {
-    value = 2;
-    description = "Slow but steady";
-  } else {
-    value = 1;
-    description = "Very slow pace";
-  }
-
-  return { value, description };
 }

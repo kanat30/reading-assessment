@@ -22,8 +22,15 @@ export interface ScoringMetrics {
   accuracy_percent: number;
   correct_words: number;
   total_words_attempted: number;
-  percentile_estimate: number;
-  percentile_band: "above" | "approaching" | "below";
+  /**
+   * @deprecated Legacy fields from the pre-norms-resolution pipeline (always
+   * computed against grade-6 spring norms regardless of the session). Present
+   * only in scores_json stored before 2026-07-26; never written anymore.
+   * Percentiles now live in scores_json.norms + the honest range helpers in
+   * lib/scoring/norms.ts.
+   */
+  percentile_estimate?: number;
+  percentile_band?: "above" | "approaching" | "below";
 }
 
 export interface ErrorPattern {
@@ -41,13 +48,31 @@ export interface EnhancedErrorPattern {
   event_count: number;
 }
 
-// Prosody assessment based on NAEP Oral Reading Fluency Scale
+// Holistic prosody observation based on the NAEP Oral Reading Fluency Scale.
+// AI-generated (Claude over timing data) — rendered ONLY inside the AI
+// Observation block, labeled as such. Never the prosody score; the score comes
+// from the deterministic dimensions below.
 export interface ProsodyScore {
   level: 1 | 2 | 3 | 4;
   expression: string;      // Brief description of expression quality
   phrasing: string;        // Brief description of phrasing patterns
   pace: string;            // Brief description of pace consistency
   explanation: string;     // Overall explanation of the score
+}
+
+export type ProsodyDimensionValue = 1 | 2 | 3 | 4;
+
+// Deterministic per-dimension prosody (Rasinski MDFS dimensions), computed
+// server-side at score time (lib/scoring/prosody.ts) and stored in
+// scores_json.prosody_dimensions. Expression cannot be honestly derived from
+// ASR timing data, so it is teacher-rated: null until a teacher sets it via
+// the override flow. Teacher overrides of any dimension are applied directly
+// to this stored object by apply_session_override.
+export interface ProsodyDimensions {
+  pace: ProsodyDimensionValue;
+  smoothness: ProsodyDimensionValue;
+  phrasing: ProsodyDimensionValue;
+  expression: ProsodyDimensionValue | null;
 }
 
 // Comprehension question and answer
@@ -57,7 +82,7 @@ export interface ComprehensionQuestion {
   type: "literal" | "inferential";  // Literal = directly in text, Inferential = requires reasoning
 }
 
-export type ComprehensionStatus = "correct" | "partial" | "incorrect";
+export type ComprehensionStatus = "correct" | "partial" | "incorrect" | "ungraded";
 
 export interface ComprehensionAnswer {
   question_id: string;
@@ -71,8 +96,16 @@ export interface ComprehensionAnswer {
 export interface ComprehensionResult {
   questions: ComprehensionQuestion[];
   answers: ComprehensionAnswer[];
-  score: number;           // Number correct
+  /** Points earned (correct = 1, partial = 0.5). null when grading_status is "ungraded". */
+  score: number | null;
   total: number;           // Total questions
+  /**
+   * "graded" = AI grading succeeded (teacher can still regrade/override).
+   * "ungraded" = AI grading failed — answers are preserved, nothing is scored,
+   * the report shows a needs-manual-grading state, and aggregates exclude this
+   * passage. Never silently zero.
+   */
+  grading_status: "graded" | "ungraded";
 }
 
 export interface ScoredSession {

@@ -8,9 +8,10 @@ import { alignWords } from "@/lib/scoring/alignment";
 import { calculateMetrics } from "@/lib/scoring/metrics";
 import { computeErrorPatterns, toLegacyPatterns } from "@/lib/scoring/patterns";
 import { generateSummary } from "@/lib/scoring/summary";
-import { analyzeProsody } from "@/lib/scoring/prosody";
+import { analyzeProsody, computeProsodyDimensions } from "@/lib/scoring/prosody";
+import { resolveNorms, ResolvedNorms } from "@/lib/scoring/norms";
 import { extractPeaks } from "@/lib/scoring/waveform";
-import { DeepgramWord, SessionEvent, ScoringMetrics, ProsodyScore, EnhancedErrorPattern } from "@/lib/scoring/types";
+import { DeepgramWord, SessionEvent, ScoringMetrics, ProsodyScore, ProsodyDimensions, EnhancedErrorPattern } from "@/lib/scoring/types";
 import { getPassageById } from "@/lib/passages/library";
 
 const deepgram = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY! });
@@ -89,6 +90,7 @@ interface ScoringResult {
   insertions: SessionEvent[];
   metrics: ScoringMetrics;
   prosody: ProsodyScore | null;
+  prosodyDimensions: ProsodyDimensions;
   summary: string;
   errorPatterns: EnhancedErrorPattern[];
   avgConfidence: number;
@@ -101,7 +103,8 @@ async function runScoringPipeline(
   audioBuffer: Buffer,
   passageText: string,
   passageTitle: string,
-  durationSeconds: number
+  durationSeconds: number,
+  norms: ResolvedNorms
 ): Promise<ScoringResult> {
   // Layer 1: Deepgram ASR
   // Extract passage-specific vocabulary to boost recognition accuracy
@@ -139,9 +142,10 @@ async function runScoringPipeline(
   const expectedWords = passageText.split(/\s+/);
   const { events, insertions } = alignWords(expectedWords, words);
 
-  // Layer 3: Calculate metrics
+  // Layer 3: Calculate metrics + deterministic prosody dimensions
   const metrics = calculateMetrics(events, durationSeconds);
   const errorPatterns = computeErrorPatterns(events);
+  const prosodyDimensions = computeProsodyDimensions(events, passageText, metrics.wcpm);
 
   // Calculate average confidence
   const confidenceScores = events
@@ -159,7 +163,7 @@ async function runScoringPipeline(
     generateSummary(
       metrics.wcpm,
       metrics.accuracy_percent,
-      metrics.percentile_estimate,
+      norms,
       errorPatterns,
       passageTitle
     ),
@@ -178,6 +182,7 @@ async function runScoringPipeline(
     insertions,
     metrics,
     prosody,
+    prosodyDimensions,
     summary,
     errorPatterns,
     avgConfidence,
@@ -191,7 +196,8 @@ async function processScoring(
   audioBuffer: Buffer,
   passageText: string,
   passageTitle: string,
-  durationSeconds: number
+  durationSeconds: number,
+  norms: ResolvedNorms
 ) {
   const supabase = createAdminClient();
   const startTime = Date.now();
@@ -209,15 +215,20 @@ async function processScoring(
       audioBuffer,
       passageText,
       passageTitle,
-      durationSeconds
+      durationSeconds,
+      norms
     );
 
     const scoringDuration = (Date.now() - startTime) / 1000;
 
-    // Build scores_json
+    // Build scores_json. `norms` is the session's single resolved norm set —
+    // every surface (report header, group median, print, summary) renders
+    // grade/period/cuts from this object and never re-derives them.
     const scoresJson = {
       metrics: result.metrics,
+      norms,
       prosody: result.prosody,
+      prosody_dimensions: result.prosodyDimensions,
       summary: result.summary,
       error_patterns: result.errorPatterns,
       avg_confidence: result.avgConfidence,
@@ -336,6 +347,7 @@ export async function POST(request: NextRequest) {
     // Get passage - either from library (new flow) or database (legacy flow)
     let passageText: string;
     let passageTitle: string;
+    let passageLevel: number | null = null;
 
     if (passageId) {
       // Library passage flow: look up passage from in-memory library
@@ -348,6 +360,7 @@ export async function POST(request: NextRequest) {
       }
       passageText = libraryPassage.text;
       passageTitle = libraryPassage.title;
+      passageLevel = libraryPassage.reading_level;
     } else if (assessment.passages) {
       // Legacy database passage flow
       passageText = assessment.passages.text;
@@ -438,6 +451,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Resolve the norm set ONCE for this session: band by the student's grade
+    // (captured at assessment creation) + assessment period; fall back to
+    // estimating grade from passage level for older assessments, and label the
+    // basis. Stored in scores_json.norms — the single source every surface
+    // renders from.
+    const norms = resolveNorms({
+      studentGrade: assessment.student_grade ?? null,
+      readingLevel: passageLevel ?? assessment.reading_level ?? null,
+      period: assessment.assessment_period ?? null,
+    });
+
     // Run scoring asynchronously
     waitUntil(
       processScoring(
@@ -445,7 +469,8 @@ export async function POST(request: NextRequest) {
         audioBuffer,
         passageText,
         passageTitle,
-        durationSeconds
+        durationSeconds,
+        norms
       )
     );
 

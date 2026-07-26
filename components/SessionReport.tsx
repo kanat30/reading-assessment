@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/browser";
 import { ReportClient } from "./ReportClient";
 import { OverridePanel } from "./OverridePanel";
@@ -14,11 +13,13 @@ import { BenchmarkBand } from "./report";
 import { useCountUp } from "@/hooks/useCountUp";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useIntersectionObserver } from "@/hooks/useIntersectionObserver";
-import { SessionEvent, SessionEventOverride, EnhancedErrorPattern, EventType, EventOverrideAction } from "@/lib/scoring/types";
+import { SessionEvent, SessionEventOverride, EnhancedErrorPattern, EventType, EventOverrideAction, ProsodyDimensions } from "@/lib/scoring/types";
 import { getLastReachedIndex } from "@/lib/scoring/metrics";
 import { SCORE_REVEAL } from "@/lib/animation/constants";
 import { ReadingLevel, AssessmentPeriod, getPassageById } from "@/lib/passages/library";
 import { calculateBenchmark, BenchmarkResult } from "@/lib/scoring/benchmark";
+import { parseStoredNorms, resolveNorms, describePassageVsGrade } from "@/lib/scoring/norms";
+import { deriveProsodyHeadline } from "@/lib/scoring/prosody";
 
 interface SessionReportProps {
   sessionId: string;
@@ -36,7 +37,7 @@ interface StudentData {
   last_name: string;
 }
 
-type ComprehensionStatus = "correct" | "partial" | "incorrect";
+type ComprehensionStatus = "correct" | "partial" | "incorrect" | "ungraded";
 
 interface ComprehensionAnswer {
   id: string;
@@ -58,24 +59,29 @@ interface ScoresJson {
   metrics: {
     wcpm: number;
     accuracy_percent: number;
-    percentile_estimate: number;
-    percentile_band: "above" | "approaching" | "below";
     correct_words: number;
     total_words_attempted: number;
   };
+  // The session's resolved norm set (grade/period/cuts/basis), stored once at
+  // score time. Absent on sessions scored before 2026-07-26 (backfillable).
+  norms?: unknown;
   prosody?: {
     level: number;
     expression: string;
     phrasing: string;
     pace: string;
+    explanation?: string;
   };
+  prosody_dimensions?: Partial<ProsodyDimensions>;
   comprehension?: {
-    score: number;
+    score: number | null;
     total: number;
     // Present and "grading" only in the brief window after a student submits,
     // while the teacher-only AI grade runs in the background (see the
     // comprehension route). Reports viewed later never see this.
     status?: string;
+    // "ungraded" = AI grading failed; answers preserved, nothing scored.
+    grading_status?: string;
   };
   summary: string;
   error_patterns?: EnhancedErrorPattern[];
@@ -97,6 +103,7 @@ interface SessionData {
     passages: PassageData;
     reading_level: ReadingLevel | null;
     assessment_period: AssessmentPeriod | null;
+    student_grade: number | null;
   };
 }
 
@@ -130,6 +137,7 @@ function transformSessionRow(row: RawSessionRow): SessionData {
     passages: PassageData;
     reading_level: ReadingLevel | null;
     assessment_period: AssessmentPeriod | null;
+    student_grade: number | null;
   };
   const libraryPassage = row.passage_id ? getPassageById(row.passage_id) : undefined;
   const passages: PassageData = libraryPassage
@@ -148,12 +156,6 @@ function transformSessionRow(row: RawSessionRow): SessionData {
     scores_json: row.scores_json as ScoresJson,
     teacher_review_status: row.teacher_review_status || "unreviewed",
   };
-}
-
-function getOrdinalSuffix(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
 export function SessionReport({ sessionId }: SessionReportProps) {
@@ -176,7 +178,6 @@ export function SessionReport({ sessionId }: SessionReportProps) {
 
   // Animation triggers - default to true if data is loaded (fixes accordion/panel visibility)
   const [reportRef, isIntersecting] = useIntersectionObserver<HTMLDivElement>({ threshold: 0.1 });
-  const [percentileAnimated, setPercentileAnimated] = useState(false);
 
   // Consider visible once data loads OR intersection triggers (whichever first)
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -214,7 +215,8 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             assessments(
               passages(id, title, text, grade_band),
               reading_level,
-              assessment_period
+              assessment_period,
+              student_grade
             )
           `)
           .eq("id", sessionId)
@@ -325,30 +327,21 @@ export function SessionReport({ sessionId }: SessionReportProps) {
     reducedMotion
   );
 
-  // Calculate benchmark if reading_level and assessment_period are available
+  // Benchmark from the session's stored norm set (resolved once at score
+  // time). Sessions scored before norm storage fall back to resolving from
+  // assessment fields — same resolver, and the basis label stays honest
+  // ("estimated from passage level" when student grade wasn't captured).
   const benchmarkResult: BenchmarkResult | null = (() => {
-    const readingLevel = session?.assessments?.reading_level;
-    const assessmentPeriod = session?.assessments?.assessment_period;
-    if (readingLevel && assessmentPeriod && wcpm > 0) {
-      return calculateBenchmark(wcpm, readingLevel, assessmentPeriod);
-    }
-    return null;
+    if (!session || wcpm <= 0) return null;
+    const norms =
+      parseStoredNorms(session.scores_json.norms) ??
+      resolveNorms({
+        studentGrade: session.assessments?.student_grade,
+        readingLevel: session.assessments?.reading_level,
+        period: session.assessments?.assessment_period,
+      });
+    return calculateBenchmark(wcpm, norms);
   })();
-
-  // Trigger percentile animation after WCPM finishes
-  useEffect(() => {
-    if (reducedMotion) {
-      setPercentileAnimated(true);
-      return;
-    }
-
-    if (isReportVisible && !percentileAnimated) {
-      const timer = setTimeout(() => {
-        setPercentileAnimated(true);
-      }, (SCORE_REVEAL.wcpm + SCORE_REVEAL.percentileDelay) * 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [isReportVisible, percentileAnimated, reducedMotion]);
 
   // Override handlers
   const handleOpenOverride = useCallback((type: "wcpm" | "prosody" | "summary", value: unknown, dimension?: string) => {
@@ -361,7 +354,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
     if (!session || !overrideType) return;
 
     const fieldName = overrideType === "prosody" && overrideDimension
-      ? `prosody.${overrideDimension}`
+      ? `prosody_dimensions.${overrideDimension}`
       : overrideType;
 
     try {
@@ -387,7 +380,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         .select(`
           id, status, created_at, duration_seconds, scores_json, teacher_review_status, passage_id,
           students(first_name, last_name),
-          assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
+          assessments(passages(id, title, text, grade_band), reading_level, assessment_period, student_grade)
         `)
         .eq("id", sessionId)
         .single();
@@ -413,11 +406,13 @@ export function SessionReport({ sessionId }: SessionReportProps) {
     }
   }, [session, sessionId, supabase, overrideType, overrideDimension, overrideCurrentValue]);
 
-  // Handle prosody dot click
-  const handleProsodyDotClick = useCallback((dimension: string, level: number) => {
-    if (!session?.scores_json?.prosody) return;
-    const currentLevel = session.scores_json.prosody.level;
-    handleOpenOverride("prosody", currentLevel, dimension);
+  // Handle prosody dot click — opens the per-dimension override with THAT
+  // dimension's current stored value (null for unrated Expression).
+  const handleProsodyDotClick = useCallback((dimension: string) => {
+    if (!session) return;
+    const dims = session.scores_json.prosody_dimensions;
+    const currentValue = dims?.[dimension as keyof ProsodyDimensions] ?? null;
+    handleOpenOverride("prosody", currentValue, dimension);
   }, [session, handleOpenOverride]);
 
   // Handle event override save (word-level)
@@ -479,7 +474,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           .select(`
             id, status, created_at, duration_seconds, scores_json, teacher_review_status, passage_id,
             students(first_name, last_name),
-            assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
+            assessments(passages(id, title, text, grade_band), reading_level, assessment_period, student_grade)
           `)
           .eq("id", sessionId)
           .single();
@@ -534,7 +529,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         .select(`
           id, status, created_at, duration_seconds, scores_json, teacher_review_status, passage_id,
           students(first_name, last_name),
-          assessments(passages(id, title, text, grade_band), reading_level, assessment_period)
+          assessments(passages(id, title, text, grade_band), reading_level, assessment_period, student_grade)
         `)
         .eq("id", sessionId)
         .single();
@@ -622,6 +617,15 @@ export function SessionReport({ sessionId }: SessionReportProps) {
   const { scores_json: scoresJson, students: student, assessments, duration_seconds } = session;
   const passage = assessments.passages;
   const { metrics, prosody, comprehension, summary, error_patterns } = scoresJson;
+  // Headline prosody = median of the stored deterministic dimensions (already
+  // reflecting any teacher overrides). Null for sessions scored before
+  // per-dimension prosody existed (backfillable).
+  const prosodyDimensions = scoresJson.prosody_dimensions ?? null;
+  const prosodyHeadline = deriveProsodyHeadline(prosodyDimensions);
+  const overriddenProsodyDimensions = overrides
+    .filter((o) => o.field_name.startsWith("prosody_dimensions."))
+    .map((o) => o.field_name.replace("prosody_dimensions.", ""));
+  const comprehensionUngraded = comprehension?.grading_status === "ungraded";
   const studentName = `${student.first_name} ${student.last_name}`;
   const isEdited = session.teacher_review_status === "edited";
 
@@ -669,46 +673,26 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           </span>
         </div>
 
-        {/* Percentile line - show benchmark if available, otherwise show old percentile */}
-        {benchmarkResult ? (
-          <p className="text-base text-stone mt-3">
-            {benchmarkResult.label} · Level {session.assessments.reading_level} · {benchmarkResult.period}
-          </p>
-        ) : (
-          <p className="text-base text-stone mt-3">
-            {getOrdinalSuffix(metrics.percentile_estimate)} percentile · grade {passage.grade_band} spring
-          </p>
+        {/* Benchmark line — band, percentile range, and the passage-vs-grade
+            statement, all from the session's single resolved norm set */}
+        {benchmarkResult && (
+          <>
+            <p className="text-base text-stone mt-3">
+              {benchmarkResult.label} · {benchmarkResult.percentileText}
+            </p>
+            {describePassageVsGrade(benchmarkResult.norms) && (
+              <p className="text-sm text-stone mt-1">
+                {describePassageVsGrade(benchmarkResult.norms)}
+              </p>
+            )}
+          </>
         )}
       </div>
 
-      {/* ===== BENCHMARK / PERCENTILE BAR ===== */}
-      {benchmarkResult ? (
+      {/* ===== BENCHMARK BAR ===== */}
+      {benchmarkResult && (
         <div className="max-w-[600px] mx-auto">
           <BenchmarkBand result={benchmarkResult} showNorms={true} />
-        </div>
-      ) : (
-        <div className="max-w-[600px] mx-auto relative">
-          <div className="w-full h-1.5 bg-mist rounded-full overflow-hidden relative">
-            {/* 50th percentile marker */}
-            <div
-              className="absolute top-1/2 -translate-y-1/2 w-3 h-px bg-stone/30"
-              style={{ left: "50%" }}
-            />
-
-            {/* Animated fill - neutral shades to show position without implying judgment */}
-            <motion.div
-              className={`h-full rounded-full ${
-                metrics.percentile_band === "above"
-                  ? "bg-ink"
-                  : metrics.percentile_band === "approaching"
-                  ? "bg-stone"
-                  : "bg-stone/60"
-              }`}
-              initial={{ width: reducedMotion ? `${metrics.percentile_estimate}%` : 0 }}
-              animate={{ width: percentileAnimated ? `${metrics.percentile_estimate}%` : 0 }}
-              transition={reducedMotion ? { duration: 0 } : { duration: SCORE_REVEAL.percentile, ease: "easeOut" }}
-            />
-          </div>
         </div>
       )}
 
@@ -731,7 +715,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             </div>
             <div className="text-center border-l border-mist">
               <p className="text-3xl font-semibold text-ink">
-                {prosody?.level || "—"}<span className="text-lg">/4</span>
+                {prosodyHeadline != null ? prosodyHeadline : "—"}<span className="text-lg">/4</span>
               </p>
               <p className="text-xs text-stone uppercase tracking-wide mt-1">Prosody</p>
             </div>
@@ -740,11 +724,18 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                 <p className="text-3xl font-semibold text-ink">
                   {comprehension.status === "grading" ? (
                     <span className="text-lg text-stone">Grading…</span>
+                  ) : comprehensionUngraded || comprehension.score == null ? (
+                    <span className="text-lg text-stone">Needs review</span>
                   ) : (
                     <>{comprehension.score}<span className="text-lg">/{comprehension.total}</span></>
                   )}
                 </p>
                 <p className="text-xs text-stone uppercase tracking-wide mt-1">Comprehension</p>
+                {comprehensionUngraded && (
+                  <p className="text-[10px] text-stone mt-1">
+                    AI grading failed — use Re-grade or review answers manually
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -772,6 +763,16 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           <span className="inline-block mt-2 text-[10px] text-stone uppercase tracking-wider">
             edited
           </span>
+        )}
+        {/* Holistic NAEP prosody estimate lives HERE, as an AI observation —
+            never as the prosody score (that comes from the deterministic
+            dimensions above). */}
+        {prosody && (
+          <p className="text-sm text-stone mt-3 italic">
+            AI holistic prosody observation: Level {prosody.level}/4 on the NAEP
+            oral reading fluency scale.
+            {prosody.explanation ? ` ${prosody.explanation}` : ""}
+          </p>
         )}
         <p className="text-xs text-stone mt-3">
           Results are advisory screening data, not a diagnosis or placement.
@@ -849,7 +850,8 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             passageText={passage.text}
             events={events}
             eventOverrides={eventOverrides}
-            metrics={metrics}
+            prosodyDimensions={prosodyDimensions}
+            overriddenProsodyDimensions={overriddenProsodyDimensions}
             hasAudio={!!session.audio_url}
             waveformPeaks={session.scores_json.waveform_peaks}
             durationSeconds={duration_seconds}
@@ -879,7 +881,8 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                 {regrading ? "Re-grading..." : "Re-grade"}
               </button>
               <span className="text-sm font-medium text-ink">
-                {comprehension?.score || 0}/{comprehension?.total || comprehensionAnswers.length}
+                {comprehensionUngraded || comprehension?.score == null ? "—" : comprehension.score}
+                /{comprehension?.total || comprehensionAnswers.length}
               </span>
               <div className="flex gap-1">
                 {comprehensionAnswers.map((answer) => (
@@ -888,6 +891,7 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                     className={`w-2 h-2 rounded-full ${
                       answer.status === "correct" ? "bg-success"
                         : answer.status === "partial" ? "bg-warning"
+                        : answer.status === "ungraded" ? "bg-stone/40"
                         : "bg-alert"
                     }`}
                   />
@@ -913,10 +917,18 @@ export function SessionReport({ sessionId }: SessionReportProps) {
                             ? "bg-success/15 text-success"
                             : answer.status === "partial"
                             ? "bg-warning/15 text-warning"
+                            : answer.status === "ungraded"
+                            ? "bg-mist text-stone"
                             : "bg-alert/15 text-alert"
                         }`}
                       >
-                        {answer.status === "correct" ? "Correct" : answer.status === "partial" ? "Partial" : "Incorrect"}
+                        {answer.status === "correct"
+                          ? "Correct"
+                          : answer.status === "partial"
+                          ? "Partial"
+                          : answer.status === "ungraded"
+                          ? "Needs review"
+                          : "Incorrect"}
                       </span>
                     </div>
                     <p className="text-sm font-medium text-ink mb-3">{question.question}</p>

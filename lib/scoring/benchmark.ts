@@ -1,84 +1,50 @@
 /**
- * Benchmark Scoring Logic
- * Uses Hasbrouck-Tindal norms for grade-level comparison
+ * Benchmark scoring — banding a WCPM against a resolved Hasbrouck-Tindal norm
+ * set. The norm set itself is resolved exactly once per session (see
+ * lib/scoring/norms.ts) and stored in scores_json.norms; everything here takes
+ * that resolved set as input rather than re-deriving grade/period.
  */
 
+import { AssessmentPeriod, BenchmarkBand } from "../passages/library";
 import {
-  HASBROUCK_TINDAL_NORMS,
-  ReadingLevel,
-  AssessmentPeriod,
-  BenchmarkBand,
-} from "../passages/library";
+  ResolvedNorms,
+  NormCuts,
+  PercentileRange,
+  getBand,
+  getBandLabel,
+  getPercentileRange,
+  describePercentile,
+} from "./norms";
 
 export interface BenchmarkResult {
   band: BenchmarkBand;
   label: string;
   wcpm: number;
-  percentile: number;
-  gradeNorms: {
-    p25: number;
-    p50: number;
-  };
+  /** Honest percentile position against the five published cuts. */
+  percentile: PercentileRange;
+  percentileText: string;
+  norms: ResolvedNorms;
+  /** Convenience aliases used by display components. */
+  gradeNorms: NormCuts;
   period: AssessmentPeriod;
-  gradeLevel: 4 | 5 | 6 | 7 | 8;
+  gradeLevel: ResolvedNorms["grade"];
 }
 
 /**
- * Map reading level to grade for norm lookup
- * Reading levels are passage difficulty; we map to appropriate grade norms
+ * Band a WCPM against a resolved norm set.
  */
-const READING_LEVEL_TO_GRADE: Record<ReadingLevel, 4 | 5 | 6 | 7 | 8> = {
-  3: 4, // Level 3 (3rd-4th grade reading) uses grade 4 norms
-  4: 4, // Level 4 (4th-5th grade reading) uses grade 4 norms - core use case
-  5: 5, // Level 5 (6th grade) uses grade 5 norms
-  6: 6, // Level 6 (7th grade) uses grade 6 norms
-  7: 7, // Level 7 (8th grade+) uses grade 7 norms
-};
-
-/**
- * Calculate benchmark band and percentile estimate
- */
-export function calculateBenchmark(
-  wcpm: number,
-  readingLevel: ReadingLevel,
-  period: AssessmentPeriod
-): BenchmarkResult {
-  const gradeLevel = READING_LEVEL_TO_GRADE[readingLevel];
-  const norms = HASBROUCK_TINDAL_NORMS[gradeLevel][period];
-
-  let band: BenchmarkBand;
-  let label: string;
-  let percentile: number;
-
-  if (wcpm >= norms.p50) {
-    band = "at";
-    label = "At Benchmark";
-    // Estimate percentile above 50th
-    const excess = wcpm - norms.p50;
-    const spreadAbove50 = norms.p50 * 0.3; // Rough estimate of p75-p50 spread
-    percentile = Math.min(99, 50 + (excess / spreadAbove50) * 25);
-  } else if (wcpm >= norms.p25) {
-    band = "below";
-    label = "Below Benchmark";
-    // Linear interpolation between 25th and 50th
-    const range = norms.p50 - norms.p25;
-    const position = wcpm - norms.p25;
-    percentile = 25 + (position / range) * 25;
-  } else {
-    band = "well_below";
-    label = "Well Below Benchmark";
-    // Below 25th percentile
-    percentile = (wcpm / norms.p25) * 25;
-  }
-
+export function calculateBenchmark(wcpm: number, norms: ResolvedNorms): BenchmarkResult {
+  const band = getBand(wcpm, norms.cuts);
   return {
     band,
-    label,
+    label: getBandLabel(band),
     wcpm,
-    percentile: Math.round(Math.max(1, Math.min(99, percentile))),
-    gradeNorms: norms,
-    period,
-    gradeLevel,
+    percentile: getPercentileRange(wcpm, norms.cuts),
+    percentileText: describePercentile(wcpm, norms.cuts),
+    norms,
+    gradeNorms: norms.cuts,
+    period: norms.period,
+    gradeLevel: norms.grade,
   };
 }
 
@@ -115,15 +81,14 @@ export interface MedianResult {
  */
 export function calculateMedianResult(
   wcpmScores: number[],
-  readingLevel: ReadingLevel,
-  period: AssessmentPeriod
+  norms: ResolvedNorms
 ): MedianResult {
   const medianWcpm = calculateMedianWCPM(wcpmScores);
 
   return {
     medianWcpm,
     scores: wcpmScores,
-    benchmark: calculateBenchmark(medianWcpm, readingLevel, period),
+    benchmark: calculateBenchmark(medianWcpm, norms),
   };
 }
 

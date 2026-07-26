@@ -5,17 +5,22 @@ import {
   calculateMedianWCPM,
   getBenchmarkColor,
 } from "@/lib/scoring/benchmark";
-import { ReadingLevel, AssessmentPeriod } from "@/lib/passages/library";
+import { parseStoredNorms, resolveNorms } from "@/lib/scoring/norms";
 import { BenchmarkBand } from "./BenchmarkBand";
 
 // One passage's headline metrics, pulled from that session's stored scores_json.
 export interface GroupPassageStat {
   wcpm: number | null;
   accuracy: number | null;
+  /** Median of the stored prosody dimensions (null = scored before dimensions). */
   prosodyLevel: number | null;
   comprehensionScore: number | null;
   comprehensionTotal: number | null;
   comprehensionPending: boolean;
+  /** True when AI grading failed — excluded from the aggregate, never a silent zero. */
+  comprehensionUngraded?: boolean;
+  /** The session's stored scores_json.norms (resolved once at score time). */
+  norms?: unknown;
 }
 
 interface GroupMedianReportProps {
@@ -23,10 +28,8 @@ interface GroupMedianReportProps {
   totalPassages: number; // passages the assessment was configured for (e.g. 3)
   readingLevel: number | null;
   period: string | null;
+  studentGrade: number | null;
 }
-
-const VALID_LEVELS = [3, 4, 5, 6, 7];
-const VALID_PERIODS = ["BOY", "MOY", "EOY"];
 
 // Median of a numeric list (reuses the WCPM median so accuracy/prosody follow the same
 // Acadience rule: middle of 3, average of 2). Returns null for an empty list.
@@ -46,6 +49,7 @@ export function GroupMedianReport({
   totalPassages,
   readingLevel,
   period,
+  studentGrade,
 }: GroupMedianReportProps) {
   const wcpms = stats
     .map((s) => s.wcpm)
@@ -60,10 +64,13 @@ export function GroupMedianReport({
   const readCount = stats.length;
   const scored = wcpms.length;
 
-  // Comprehension is a small per-passage check; aggregate across the read passages.
+  // Comprehension is a small per-passage check; aggregate across the read
+  // passages. Ungraded passages (AI grading failed) are excluded entirely —
+  // counting them as 0 would silently punish the student for an AI failure.
   const compStats = stats.filter(
-    (s) => (s.comprehensionTotal ?? 0) > 0
+    (s) => (s.comprehensionTotal ?? 0) > 0 && !s.comprehensionUngraded && s.comprehensionScore != null
   );
+  const compUngradedCount = stats.filter((s) => s.comprehensionUngraded).length;
   const compPending = stats.some((s) => s.comprehensionPending);
   const compScore = compStats.reduce((a, s) => a + (s.comprehensionScore ?? 0), 0);
   const compTotal = compStats.reduce((a, s) => a + (s.comprehensionTotal ?? 0), 0);
@@ -73,16 +80,15 @@ export function GroupMedianReport({
     ? Math.round(median(prosodyLevels)!)
     : null;
 
-  const levelValid = readingLevel != null && VALID_LEVELS.includes(readingLevel);
-  const periodValid = period != null && VALID_PERIODS.includes(period);
+  // The group's norm set: the sessions share one assessment, so any session's
+  // stored norms describe the group. Fall back to resolving from assessment
+  // fields for sessions scored before norm storage (basis label stays honest).
+  const groupNorms =
+    stats.map((s) => parseStoredNorms(s.norms)).find((n) => n !== null) ??
+    resolveNorms({ studentGrade, readingLevel, period });
+
   const medianResult =
-    scored > 0 && levelValid && periodValid
-      ? calculateMedianResult(
-          wcpms,
-          readingLevel as ReadingLevel,
-          period as AssessmentPeriod
-        )
-      : null;
+    scored > 0 ? calculateMedianResult(wcpms, groupNorms) : null;
 
   // One numbered marker per scored passage, in passage order (1, 2, 3), placed on the
   // benchmark ribbon at its own WCPM.
@@ -119,11 +125,7 @@ export function GroupMedianReport({
           </p>
         </div>
       ) : (
-        <p className="text-sm text-stone">
-          {scored === 0
-            ? "Awaiting scores."
-            : `Median ${calculateMedianWCPM(wcpms)} WCPM · benchmark band unavailable for this assessment.`}
-        </p>
+        <p className="text-sm text-stone">Awaiting scores.</p>
       )}
 
       {/* Supporting metrics — median accuracy / prosody, aggregate comprehension */}
@@ -151,6 +153,12 @@ export function GroupMedianReport({
           <div className="text-[11px] uppercase tracking-wide text-stone mt-1">
             Comprehension{compPending && compTotal > 0 ? " · grading" : ""}
           </div>
+          {compUngradedCount > 0 && (
+            <div className="text-[10px] text-warning mt-0.5">
+              {compUngradedCount} passage{compUngradedCount > 1 ? "s" : ""} need
+              {compUngradedCount > 1 ? "" : "s"} manual review
+            </div>
+          )}
         </div>
       </div>
 

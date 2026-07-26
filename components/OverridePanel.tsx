@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // Rasinski MDFS rubric descriptions
@@ -37,6 +37,16 @@ export function OverridePanel({
   const [value, setValue] = useState<unknown>(currentValue);
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Re-sync on every open: the panel is reused across fields/dimensions, so a
+  // stale value from the previous edit must never carry over (e.g. rating
+  // Expression right after adjusting Pace).
+  useEffect(() => {
+    if (isOpen) {
+      setValue(currentValue);
+      setReason("");
+    }
+  }, [isOpen, currentValue]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -133,8 +143,16 @@ export function OverridePanel({
               {type === "prosody" && (
                 <div className="space-y-6">
                   <h3 className="text-lg font-medium text-ink">
-                    Set {dimension || "prosody"} to:
+                    {currentValue == null
+                      ? `Rate ${dimension || "prosody"} (1–4)`
+                      : `Set ${dimension || "prosody"} to:`}
                   </h3>
+                  {dimension === "expression" && currentValue == null && (
+                    <p className="text-sm text-stone -mt-3">
+                      Expression is teacher-rated — timing data cannot measure
+                      intonation or stress. Your rating becomes this dimension&apos;s score.
+                    </p>
+                  )}
 
                   <div className="grid grid-cols-4 gap-3">
                     {[1, 2, 3, 4].map((level) => (
@@ -178,10 +196,10 @@ export function OverridePanel({
                     </button>
                     <button
                       onClick={handleSave}
-                      disabled={saving}
+                      disabled={saving || typeof value !== "number"}
                       className="px-6 py-2.5 text-sm font-medium text-paper bg-accent-blue rounded-lg hover:bg-accent-blue/90 transition-colors disabled:opacity-50"
                     >
-                      {saving ? "Saving..." : "Save correction"}
+                      {saving ? "Saving..." : currentValue == null ? "Save rating" : "Save correction"}
                     </button>
                   </div>
                 </div>

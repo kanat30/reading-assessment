@@ -44,38 +44,49 @@ export interface Passage extends PassageMetadata {
 }
 
 /**
- * Hasbrouck-Tindal WCPM Norms
- * Used for At/Below/Well-Below Benchmark scoring
+ * Hasbrouck-Tindal WCPM Norms — full published percentile cuts (10/25/50/75/90).
+ * Used for At/Above · Below · Well Below Benchmark scoring and honest percentile
+ * range display (a WCPM between two cuts is reported as a range, never as an
+ * interpolated point estimate — the published tables only define these five cuts).
  *
  * Grades 4-6: 2017 compiled norms (Hasbrouck & Tindal, "An Update to Compiled
  * ORF Norms", Technical Report #1702, University of Oregon; eric.ed.gov/?id=ED594994).
  * Grades 7-8: the 2017 update stops at grade 6, so these rows come from the 2006
  * compilation (Hasbrouck & Tindal, The Reading Teacher 59(7), 636-644).
+ * All 75 values re-verified against two independent reproductions per grade
+ * (readingrockets.org + readnaturally.com, corroborated by district/university
+ * documents for grades 7-8) on 2026-07-26.
  */
 export const HASBROUCK_TINDAL_NORMS = {
-  4: { BOY: { p50: 94, p25: 75 }, MOY: { p50: 120, p25: 95 }, EOY: { p50: 133, p25: 105 } },
-  5: { BOY: { p50: 121, p25: 87 }, MOY: { p50: 133, p25: 109 }, EOY: { p50: 146, p25: 119 } },
-  6: { BOY: { p50: 132, p25: 112 }, MOY: { p50: 145, p25: 116 }, EOY: { p50: 146, p25: 122 } },
-  7: { BOY: { p50: 128, p25: 102 }, MOY: { p50: 136, p25: 109 }, EOY: { p50: 150, p25: 123 } },
-  8: { BOY: { p50: 133, p25: 106 }, MOY: { p50: 146, p25: 115 }, EOY: { p50: 151, p25: 124 } },
+  4: {
+    BOY: { p10: 60, p25: 75, p50: 94, p75: 125, p90: 153 },
+    MOY: { p10: 71, p25: 95, p50: 120, p75: 143, p90: 168 },
+    EOY: { p10: 83, p25: 105, p50: 133, p75: 160, p90: 184 },
+  },
+  5: {
+    BOY: { p10: 64, p25: 87, p50: 121, p75: 153, p90: 179 },
+    MOY: { p10: 84, p25: 109, p50: 133, p75: 160, p90: 183 },
+    EOY: { p10: 102, p25: 119, p50: 146, p75: 169, p90: 195 },
+  },
+  6: {
+    BOY: { p10: 89, p25: 112, p50: 132, p75: 159, p90: 185 },
+    MOY: { p10: 91, p25: 116, p50: 145, p75: 166, p90: 195 },
+    EOY: { p10: 91, p25: 122, p50: 146, p75: 173, p90: 204 },
+  },
+  7: {
+    BOY: { p10: 79, p25: 102, p50: 128, p75: 156, p90: 180 },
+    MOY: { p10: 88, p25: 109, p50: 136, p75: 165, p90: 192 },
+    EOY: { p10: 98, p25: 123, p50: 150, p75: 177, p90: 202 },
+  },
+  8: {
+    BOY: { p10: 77, p25: 106, p50: 133, p75: 161, p90: 185 },
+    MOY: { p10: 84, p25: 115, p50: 146, p75: 173, p90: 199 },
+    EOY: { p10: 97, p25: 124, p50: 151, p75: 177, p90: 199 },
+  },
 } as const;
 
 export type AssessmentPeriod = "BOY" | "MOY" | "EOY";
 export type BenchmarkBand = "at" | "below" | "well_below";
-
-/**
- * Get benchmark band based on WCPM and grade-level norms
- */
-export function getBenchmarkBand(
-  wcpm: number,
-  gradeLevel: 4 | 5 | 6 | 7 | 8,
-  period: AssessmentPeriod
-): BenchmarkBand {
-  const norms = HASBROUCK_TINDAL_NORMS[gradeLevel][period];
-  if (wcpm >= norms.p50) return "at";
-  if (wcpm >= norms.p25) return "below";
-  return "well_below";
-}
 
 /**
  * Calculate median of 3 WCPM scores (Acadience protocol)

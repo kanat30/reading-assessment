@@ -1,7 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { BenchmarkResult, getBenchmarkColor, getPeriodLabel } from "@/lib/scoring/benchmark";
+import { BenchmarkResult, getBenchmarkColor } from "@/lib/scoring/benchmark";
+import { describeNormsBasis } from "@/lib/scoring/norms";
 
 interface BenchmarkBandProps {
   result: BenchmarkResult;
@@ -127,10 +128,15 @@ export function BenchmarkBand({ result, showNorms = true, compact = false, passa
         <span>{maxScale}</span>
       </div>
 
-      {/* Norms info */}
+      {/* Norms info — always from the session's resolved norm set */}
       {showNorms && (
         <div className="mt-2 text-xs text-stone">
-          Grade {result.gradeLevel} norms ({getPeriodLabel(result.period)})
+          <p>
+            {describeNormsBasis(result.norms).caption} · {result.percentileText}
+          </p>
+          {describeNormsBasis(result.norms).basisNote && (
+            <p className="italic mt-0.5">{describeNormsBasis(result.norms).basisNote}</p>
+          )}
         </div>
       )}
     </div>
