@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npm run test:scoring && npm run test:recompute",
+    "test:scoring": "node --import tsx --test lib/scoring/*.test.ts",
+    "test:recompute": "bash scripts/test-recompute.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
@@ -41,6 +44,7 @@
     "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "playwright-core": "^1.61.1",
     "sharp": "^0.34.5",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",

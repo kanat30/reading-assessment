@@ -128,3 +128,69 @@
     background: hsl(50 10% 94%);
   }
 }
+
+/* Marketing pages: staggered entrance + the 60-second read vignette */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise-in {
+  animation: rise-in 0.7s cubic-bezier(0.2, 0.6, 0.2, 1) both;
+}
+
+/* Calm depleting bar, looping: read (~7s), brief hold, restart */
+@keyframes timer-deplete {
+  0% {
+    width: 100%;
+  }
+  88% {
+    width: 0%;
+  }
+  100% {
+    width: 0%;
+  }
+}
+
+@keyframes timer-cue {
+  0%,
+  62% {
+    opacity: 0;
+  }
+  72%,
+  86% {
+    opacity: 1;
+  }
+  92%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.timer-deplete {
+  animation: timer-deplete 8s linear infinite;
+}
+
+.timer-cue {
+  animation: timer-cue 8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise-in {
+    animation: none;
+  }
+  .timer-deplete {
+    animation: none;
+    width: 38%;
+  }
+  .timer-cue {
+    animation: none;
+    opacity: 1;
+  }
+}
