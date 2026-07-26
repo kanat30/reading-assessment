@@ -44,13 +44,18 @@ export interface Passage extends PassageMetadata {
 }
 
 /**
- * Hasbrouck-Tindal WCPM Norms (2017)
+ * Hasbrouck-Tindal WCPM Norms
  * Used for At/Below/Well-Below Benchmark scoring
+ *
+ * Grades 4-6: 2017 compiled norms (Hasbrouck & Tindal, "An Update to Compiled
+ * ORF Norms", Technical Report #1702, University of Oregon; eric.ed.gov/?id=ED594994).
+ * Grades 7-8: the 2017 update stops at grade 6, so these rows come from the 2006
+ * compilation (Hasbrouck & Tindal, The Reading Teacher 59(7), 636-644).
  */
 export const HASBROUCK_TINDAL_NORMS = {
-  4: { BOY: { p50: 94, p25: 68 }, MOY: { p50: 120, p25: 93 }, EOY: { p50: 133, p25: 105 } },
-  5: { BOY: { p50: 121, p25: 95 }, MOY: { p50: 133, p25: 109 }, EOY: { p50: 146, p25: 119 } },
-  6: { BOY: { p50: 132, p25: 106 }, MOY: { p50: 145, p25: 116 }, EOY: { p50: 162, p25: 130 } },
+  4: { BOY: { p50: 94, p25: 75 }, MOY: { p50: 120, p25: 95 }, EOY: { p50: 133, p25: 105 } },
+  5: { BOY: { p50: 121, p25: 87 }, MOY: { p50: 133, p25: 109 }, EOY: { p50: 146, p25: 119 } },
+  6: { BOY: { p50: 132, p25: 112 }, MOY: { p50: 145, p25: 116 }, EOY: { p50: 146, p25: 122 } },
   7: { BOY: { p50: 128, p25: 102 }, MOY: { p50: 136, p25: 109 }, EOY: { p50: 150, p25: 123 } },
   8: { BOY: { p50: 133, p25: 106 }, MOY: { p50: 146, p25: 115 }, EOY: { p50: 151, p25: 124 } },
 } as const;

@@ -1,12 +1,14 @@
 import { SessionEvent, ScoringMetrics, ErrorPattern } from "./types";
 
-// Hasbrouck-Tindal Grade 6 Spring Norms
+// Hasbrouck-Tindal Grade 6 Spring Norms (2017 compiled norms, Technical Report
+// #1702; eric.ed.gov/?id=ED594994). Legacy percentile path only — sessions with a
+// reading level use HASBROUCK_TINDAL_NORMS in lib/passages/library.ts instead.
 const NORMS = {
-  percentile_90: 177,
-  percentile_75: 166,
-  percentile_50: 150,
+  percentile_90: 204,
+  percentile_75: 173,
+  percentile_50: 146,
   percentile_25: 122,
-  percentile_10: 89,
+  percentile_10: 91,
 };
 
 // A student reads one contiguous chunk of the passage and then goes silent, so
@@ -19,6 +21,8 @@ const NORMS = {
 // accuracy, and the bands. GAP_THRESHOLD is the largest run of never-voiced words
 // we still treat as an in-read skip; a bigger silent gap followed only by a sparse
 // TAIL_TOLERANCE of voiced words is treated as the stray tail after the real stop.
+// NOTE: the SQL override-recompute (recalculate_session_metrics, migration 0022)
+// re-implements the gap/tail cutoff below. Keep these two constants in sync there.
 const NOT_REACHED_GAP_THRESHOLD = 12;
 const NOT_REACHED_TAIL_TOLERANCE = 3;
 

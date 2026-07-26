@@ -19,10 +19,10 @@ export async function generateSummary(
       messages: [
         {
           role: "user",
-          content: `You are writing a brief teacher-facing summary of a 6th grader's oral reading fluency assessment. Write exactly 2-3 sentences, in the tone of a doctor's note: clinical, specific, useful. No preamble, no greetings. Mention the WCPM relative to the grade-6 spring benchmark of 150, the accuracy, and one specific pattern in the errors if any stands out. Do not mention the student by name.
+          content: `You are writing a brief teacher-facing summary of a 6th grader's oral reading fluency assessment. Write exactly 2-3 sentences, in the tone of a doctor's note: clinical, specific, useful. No preamble, no greetings. Mention the WCPM relative to the grade-6 spring benchmark of 146, the accuracy, and one specific pattern in the errors if any stands out. Do not mention the student by name.
 
 Data:
-- WCPM: ${wcpm} (benchmark: 150)
+- WCPM: ${wcpm} (benchmark: 146)
 - Accuracy: ${accuracy}%
 - Percentile: ${percentile}
 - Top error patterns: ${patternsDescription}
@@ -38,7 +38,7 @@ Write the summary now.`,
   } catch (error) {
     logAiFallback("summary", error);
     // Graceful fallback - generate a basic summary without Claude
-    const benchmark = 150;
+    const benchmark = 146;
     const performance = wcpm >= benchmark ? "at or above" : "below";
     return `Reading rate of ${wcpm} WCPM is ${performance} the grade 6 spring benchmark of ${benchmark}. Accuracy was ${accuracy}%.`;
   }
